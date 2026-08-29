@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+
 import '../data/mock_novels.dart';
 import '../models/novel.dart';
 import '../theme/app_theme.dart';
 import '../widgets/novel_card.dart';
+import 'novel_detail_screen.dart';
 
 /// Нүүр хуудас — greeting, featured banner, "Үргэлжлүүлэн унших" болон
 /// "Шинээр нэмэгдсэн" хэсгүүд, доод navigation bar-тай.
+/// `Novel` дээр дарахад `NovelDetailScreen` рүү шилждэг.
 class NovelListScreen extends StatefulWidget {
   const NovelListScreen({super.key});
 
@@ -17,12 +20,10 @@ class NovelListScreen extends StatefulWidget {
 class _NovelListScreenState extends State<NovelListScreen> {
   int _currentTab = 0;
 
-  void _openPlaceholderDetail(BuildContext context, Novel novel) {
-    // Detail screen хараахан бэлэн болоогүй тул түр зуурын мэдэгдэл харуулна.
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('${novel.title} — дэлгэрэнгүй дэлгэц удахгүй нэмэгдэнэ'),
-        backgroundColor: AppColors.surface,
+  void _openNovelDetail(BuildContext context, Novel novel) {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => NovelDetailScreen(novel: novel),
       ),
     );
   }
@@ -69,7 +70,7 @@ class _NovelListScreenState extends State<NovelListScreen> {
 
             // --- Featured / banner ---
             GestureDetector(
-              onTap: () => _openPlaceholderDetail(context, featured),
+              onTap: () => _openNovelDetail(context, featured),
               child: Container(
                 height: 190,
                 width: double.infinity,
@@ -81,7 +82,7 @@ class _NovelListScreenState extends State<NovelListScreen> {
                     fit: BoxFit.cover,
                     onError: (error, stackTrace) {},
                     colorFilter: ColorFilter.mode(
-                      Colors.black.withOpacity(0.35),
+                      Colors.black.withValues(alpha: 0.35),
                       BlendMode.darken,
                     ),
                   ),
@@ -129,7 +130,7 @@ class _NovelListScreenState extends State<NovelListScreen> {
                 child: ProgressNovelCard(
                   novel: novel,
                   progress: progress.clamp(0.0, 1.0),
-                  onTap: () => _openPlaceholderDetail(context, novel),
+                  onTap: () => _openNovelDetail(context, novel),
                 ),
               );
             }),
@@ -151,7 +152,7 @@ class _NovelListScreenState extends State<NovelListScreen> {
                     width: 110,
                     child: NovelPosterCard(
                       novel: novel,
-                      onTap: () => _openPlaceholderDetail(context, novel),
+                      onTap: () => _openNovelDetail(context, novel),
                     ),
                   );
                 },
