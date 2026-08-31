@@ -13,11 +13,45 @@ class AdminScreen extends StatefulWidget {
   State<AdminScreen> createState() => _AdminScreenState();
 }
 
-class _AdminScreenState extends State<AdminScreen> {
+class _AdminScreenState extends State<AdminScreen>
+    with SingleTickerProviderStateMixin {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final FirebaseAuth _auth = FirebaseAuth.instance;
 
   String? _processingRequestKey;
+
+  final TextEditingController _userSearchController =
+      TextEditingController();
+
+  bool _searchingUser = false;
+  String? _selectedUserUid;
+  Map<String, dynamic>? _selectedUserData;
+
+  late final TabController _adminTabController;
+  int _adminTabIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _adminTabController = TabController(
+      length: 4,
+      vsync: this,
+    );
+    _adminTabController.addListener(() {
+      if (!_adminTabController.indexIsChanging && mounted) {
+        setState(() {
+          _adminTabIndex = _adminTabController.index;
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _adminTabController.dispose();
+    _userSearchController.dispose();
+    super.dispose();
+  }
 
   int _readInt(dynamic value) {
     if (value is int) return value;
@@ -403,15 +437,11 @@ class _AdminScreenState extends State<AdminScreen> {
     final adminUser = _auth.currentUser;
 
     if (adminUser == null) {
-      _showMessage(
-        'Админ хэрэглэгч нэвтрээгүй байна.',
-      );
+      _showMessage('Админ хэрэглэгч нэвтрээгүй байна.');
       return;
     }
 
-    final processingKey =
-        'xp:$requestId';
-
+    final processingKey = 'xp:$requestId';
     if (_processingRequestKey != null) return;
 
     setState(() {
@@ -424,32 +454,25 @@ class _AdminScreenState extends State<AdminScreen> {
           final adminRef = _firestore
               .collection('users')
               .doc(adminUser.uid);
-
           final adminSnapshot =
               await transaction.get(adminRef);
 
           if (!adminSnapshot.exists ||
               adminSnapshot.data()?['isAdmin'] != true) {
-            throw Exception(
-              'Танд админ эрх байхгүй байна.',
-            );
+            throw Exception('Танд админ эрх байхгүй байна.');
           }
 
           final requestRef = _firestore
               .collection('xpRedeemRequests')
               .doc(requestId);
-
           final requestSnapshot =
               await transaction.get(requestRef);
 
           if (!requestSnapshot.exists) {
-            throw Exception(
-              'XP хүсэлт олдсонгүй.',
-            );
+            throw Exception('XP хүсэлт олдсонгүй.');
           }
 
-          final requestData =
-              requestSnapshot.data() ??
+          final requestData = requestSnapshot.data() ??
               <String, dynamic>{};
 
           if (requestData['status'] != 'pending') {
@@ -458,214 +481,80 @@ class _AdminScreenState extends State<AdminScreen> {
             );
           }
 
-          final senderUid =
-              (requestData['userUid'] ?? '')
-                  .toString();
-
+          final userUid =
+              (requestData['userUid'] ?? '').toString();
           final mode =
-              (requestData['mode'] ?? 'self')
-                  .toString();
-
+              (requestData['mode'] ?? '').toString();
           final recipientUid =
-              (requestData['recipientUid'] ??
-                      senderUid)
-                  .toString();
-
+              (requestData['recipientUid'] ?? '').toString();
           final entitlementType =
               (requestData['entitlementType'] ?? '')
                   .toString();
+          final days = _readInt(requestData['days']);
+          final xpCost = _readInt(requestData['xpCost']);
 
-          final days =
-              _readInt(requestData['days']);
-
-          final xpCost =
-              _readInt(requestData['xpCost']);
-
-          if (senderUid.isEmpty) {
-            throw Exception(
-              'XP илгээгчийн UID байхгүй байна.',
-            );
+          if (userUid.isEmpty) {
+            throw Exception('Хэрэглэгчийн UID байхгүй байна.');
+          }
+          if (mode != 'self') {
+            throw Exception('XP-г зөвхөн өөртөө сольж болно.');
+          }
+          if (recipientUid != userUid) {
+            throw Exception('XP хүсэлтийн хэрэглэгч зөрүүтэй байна.');
+          }
+          if (entitlementType != 'vip') {
+            throw Exception('XP-г зөвхөн VIP хоног болгоно.');
+          }
+          if (days <= 0 || xpCost != days * 10) {
+            throw Exception('XP тооцоолол буруу байна.');
           }
 
-          if (recipientUid.isEmpty) {
-            throw Exception(
-              'Хүлээн авагчийн UID байхгүй байна.',
-            );
+          final userRef =
+              _firestore.collection('users').doc(userUid);
+          final userSnapshot =
+              await transaction.get(userRef);
+
+          if (!userSnapshot.exists) {
+            throw Exception('Хэрэглэгч олдсонгүй.');
           }
 
-          if (mode != 'self' &&
-              mode != 'gift') {
-            throw Exception(
-              'XP хүсэлтийн төрөл буруу байна.',
-            );
-          }
-
-          if (mode == 'self' &&
-              senderUid != recipientUid) {
-            throw Exception(
-              'Өөртөө солих хүсэлтийн хэрэглэгч зөрүүтэй байна.',
-            );
-          }
-
-          if (mode == 'gift' &&
-              senderUid == recipientUid) {
-            throw Exception(
-              'Бэлэглэх хүсэлтийн хүлээн авагч буруу байна.',
-            );
-          }
-
-          if (days <= 0) {
-            throw Exception(
-              'Хоног буруу байна.',
-            );
-          }
-
-          if (xpCost != days * 10) {
-            throw Exception(
-              'XP тооцоолол буруу байна.',
-            );
-          }
-
-          if (entitlementType != 'vip' &&
-              entitlementType != 'vvip') {
-            throw Exception(
-              'Эрхийн төрөл буруу байна.',
-            );
-          }
-
-          final senderRef = _firestore
-              .collection('users')
-              .doc(senderUid);
-
-          final senderSnapshot =
-              await transaction.get(senderRef);
-
-          if (!senderSnapshot.exists) {
-            throw Exception(
-              'XP илгээгч хэрэглэгч олдсонгүй.',
-            );
-          }
-
-          final senderData =
-              senderSnapshot.data() ??
+          final userData = userSnapshot.data() ??
               <String, dynamic>{};
-
-          final currentXp =
-              _readInt(senderData['xp']);
+          final currentXp = _readInt(userData['xp']);
 
           if (currentXp < xpCost) {
             throw Exception(
-              'Илгээгчийн XP хүрэлцэхгүй байна. '
-              'Одоогийн XP: $currentXp, '
-              'шаардлагатай XP: $xpCost.',
+              'XP хүрэлцэхгүй байна. Одоогийн XP: $currentXp, шаардлагатай XP: $xpCost.',
             );
           }
-
-          final recipientRef = _firestore
-              .collection('users')
-              .doc(recipientUid);
-
-          final recipientSnapshot =
-              senderUid == recipientUid
-                  ? senderSnapshot
-                  : await transaction.get(
-                      recipientRef,
-                    );
-
-          if (!recipientSnapshot.exists) {
-            throw Exception(
-              'Хүлээн авагч хэрэглэгч олдсонгүй.',
-            );
-          }
-
-          final recipientData =
-              recipientSnapshot.data() ??
-              <String, dynamic>{};
 
           final now = DateTime.now();
-
-          final newExpiresAt =
-              _calculateNewExpiration(
-            userData: recipientData,
-            entitlementType: entitlementType,
+          final newExpiresAt = _calculateNewExpiration(
+            userData: userData,
+            entitlementType: 'vip',
             days: days,
             now: now,
           );
-
-          final remainingDays =
-              _calculateRemainingDays(
+          final remainingDays = _calculateRemainingDays(
             newExpiresAt,
             now,
           );
 
-          final newXp =
-              currentXp - xpCost;
-
-          if (senderUid == recipientUid) {
-            if (entitlementType == 'vip') {
-              transaction.update(
-                senderRef,
-                {
-                  'vipExpiresAt':
-                      Timestamp.fromDate(
-                    newExpiresAt,
-                  ),
-                  'vipDays': remainingDays,
-                  'xp': newXp,
-                },
-              );
-            } else {
-              transaction.update(
-                senderRef,
-                {
-                  'vvipExpiresAt':
-                      Timestamp.fromDate(
-                    newExpiresAt,
-                  ),
-                  'vvipDays': remainingDays,
-                  'xp': newXp,
-                },
-              );
-            }
-          } else {
-            transaction.update(
-              senderRef,
-              {
-                'xp': newXp,
-              },
-            );
-
-            if (entitlementType == 'vip') {
-              transaction.update(
-                recipientRef,
-                {
-                  'vipExpiresAt':
-                      Timestamp.fromDate(
-                    newExpiresAt,
-                  ),
-                  'vipDays': remainingDays,
-                },
-              );
-            } else {
-              transaction.update(
-                recipientRef,
-                {
-                  'vvipExpiresAt':
-                      Timestamp.fromDate(
-                    newExpiresAt,
-                  ),
-                  'vvipDays': remainingDays,
-                },
-              );
-            }
-          }
+          transaction.update(
+            userRef,
+            {
+              'vipExpiresAt':
+                  Timestamp.fromDate(newExpiresAt),
+              'vipDays': remainingDays,
+              'xp': currentXp - xpCost,
+            },
+          );
 
           transaction.update(
             requestRef,
             {
               'status': 'approved',
-              'approvedAt':
-                  FieldValue.serverTimestamp(),
+              'approvedAt': FieldValue.serverTimestamp(),
               'approvedBy': adminUser.uid,
             },
           );
@@ -673,13 +562,11 @@ class _AdminScreenState extends State<AdminScreen> {
       );
 
       if (!mounted) return;
-
       _showMessage(
-        'XP хүсэлт батлагдлаа.',
+        'XP хүсэлт батлагдлаа. VIP хоног нэмэгдэж, XP хасагдлаа.',
       );
     } catch (error) {
       if (!mounted) return;
-
       _showMessage(
         'XP хүсэлт батлах үед алдаа гарлаа: $error',
       );
@@ -785,6 +672,677 @@ class _AdminScreenState extends State<AdminScreen> {
     }
   }
 
+  Future<void> _approveBirthdayRequest(
+    String requestId,
+  ) async {
+    final adminUser = _auth.currentUser;
+
+    if (adminUser == null) {
+      _showMessage(
+        'Админ хэрэглэгч нэвтрээгүй байна.',
+      );
+      return;
+    }
+
+    final processingKey =
+        'birthday:$requestId';
+
+    if (_processingRequestKey != null) return;
+
+    setState(() {
+      _processingRequestKey = processingKey;
+    });
+
+    try {
+      await _firestore.runTransaction(
+        (transaction) async {
+          final adminRef = _firestore
+              .collection('users')
+              .doc(adminUser.uid);
+
+          final adminSnapshot =
+              await transaction.get(adminRef);
+
+          if (!adminSnapshot.exists ||
+              adminSnapshot.data()?['isAdmin'] != true) {
+            throw Exception(
+              'Танд админ эрх байхгүй байна.',
+            );
+          }
+
+          final requestRef = _firestore
+              .collection('birthdayGiftRequests')
+              .doc(requestId);
+
+          final requestSnapshot =
+              await transaction.get(requestRef);
+
+          if (!requestSnapshot.exists) {
+            throw Exception(
+              'Төрсөн өдрийн хүсэлт олдсонгүй.',
+            );
+          }
+
+          final requestData =
+              requestSnapshot.data() ??
+              <String, dynamic>{};
+
+          if (requestData['status'] != 'pending') {
+            throw Exception(
+              'Энэ хүсэлтийг аль хэдийн шийдвэрлэсэн байна.',
+            );
+          }
+
+          final userUid =
+              (requestData['userUid'] ?? '')
+                  .toString();
+
+          final entitlementType =
+              (requestData['entitlementType'] ?? '')
+                  .toString();
+
+          final days =
+              _readInt(requestData['days']);
+
+          final giftYear =
+              _readInt(requestData['year']);
+
+          final createdAt =
+              requestData['createdAt'];
+
+          if (userUid.isEmpty) {
+            throw Exception(
+              'Хэрэглэгчийн UID байхгүй байна.',
+            );
+          }
+
+          if (entitlementType != 'vip') {
+            throw Exception(
+              'Төрсөн өдрийн бэлэг зөвхөн VIP байна.',
+            );
+          }
+
+          if (days != 7) {
+            throw Exception(
+              'Төрсөн өдрийн бэлэг зөвхөн +7 хоног байна.',
+            );
+          }
+
+          if (giftYear <= 0) {
+            throw Exception(
+              'Төрсөн өдрийн бэлгийн жил буруу байна.',
+            );
+          }
+
+          if (createdAt is! Timestamp) {
+            throw Exception(
+              'Хүсэлт илгээсэн огноо байхгүй байна.',
+            );
+          }
+
+          final userRef = _firestore
+              .collection('users')
+              .doc(userUid);
+
+          final userSnapshot =
+              await transaction.get(userRef);
+
+          if (!userSnapshot.exists) {
+            throw Exception(
+              'Хэрэглэгч олдсонгүй.',
+            );
+          }
+
+          final userData =
+              userSnapshot.data() ??
+              <String, dynamic>{};
+
+          final birthDateValue =
+              userData['birthDate'];
+
+          if (birthDateValue is! Timestamp) {
+            throw Exception(
+              'Хэрэглэгчийн төрсөн өдөр бүртгэгдээгүй байна.',
+            );
+          }
+
+          final birthDate =
+              birthDateValue.toDate();
+
+          final requestDate =
+              createdAt.toDate().toLocal();
+
+          if (requestDate.year != giftYear ||
+              requestDate.month != birthDate.month ||
+              requestDate.day != birthDate.day) {
+            throw Exception(
+              'Энэ хүсэлт төрсөн өдрөөр илгээгдээгүй байна.',
+            );
+          }
+
+          final claimedYear =
+              _readInt(
+            userData['birthdayGiftClaimedYear'],
+          );
+
+          if (claimedYear == giftYear) {
+            throw Exception(
+              'Энэ жилийн төрсөн өдрийн бэлгийг аль хэдийн авсан байна.',
+            );
+          }
+
+          final now = DateTime.now();
+
+          final newExpiresAt =
+              _calculateNewExpiration(
+            userData: userData,
+            entitlementType: 'vip',
+            days: 7,
+            now: now,
+          );
+
+          final remainingDays =
+              _calculateRemainingDays(
+            newExpiresAt,
+            now,
+          );
+
+          transaction.update(
+            userRef,
+            {
+              'vipExpiresAt':
+                  Timestamp.fromDate(
+                newExpiresAt,
+              ),
+              'vipDays': remainingDays,
+              'birthdayGiftClaimedYear':
+                  giftYear,
+            },
+          );
+
+          transaction.update(
+            requestRef,
+            {
+              'status': 'approved',
+              'approvedAt':
+                  FieldValue.serverTimestamp(),
+              'approvedBy': adminUser.uid,
+            },
+          );
+        },
+      );
+
+      if (!mounted) return;
+
+      _showMessage(
+        '🎂 Төрсөн өдрийн бэлэг батлагдлаа. VIP +7 хоног нэмэгдлээ.',
+      );
+    } catch (error) {
+      if (!mounted) return;
+
+      _showMessage(
+        'Төрсөн өдрийн хүсэлт батлах үед алдаа гарлаа: $error',
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _processingRequestKey = null;
+        });
+      }
+    }
+  }
+
+  Future<void> _rejectBirthdayRequest(
+    String requestId,
+  ) async {
+    final adminUser = _auth.currentUser;
+
+    if (adminUser == null) {
+      _showMessage(
+        'Админ хэрэглэгч нэвтрээгүй байна.',
+      );
+      return;
+    }
+
+    final processingKey =
+        'birthday:$requestId';
+
+    if (_processingRequestKey != null) return;
+
+    setState(() {
+      _processingRequestKey = processingKey;
+    });
+
+    try {
+      await _firestore.runTransaction(
+        (transaction) async {
+          final adminRef = _firestore
+              .collection('users')
+              .doc(adminUser.uid);
+
+          final adminSnapshot =
+              await transaction.get(adminRef);
+
+          if (!adminSnapshot.exists ||
+              adminSnapshot.data()?['isAdmin'] != true) {
+            throw Exception(
+              'Танд админ эрх байхгүй байна.',
+            );
+          }
+
+          final requestRef = _firestore
+              .collection('birthdayGiftRequests')
+              .doc(requestId);
+
+          final requestSnapshot =
+              await transaction.get(requestRef);
+
+          if (!requestSnapshot.exists) {
+            throw Exception(
+              'Төрсөн өдрийн хүсэлт олдсонгүй.',
+            );
+          }
+
+          final data =
+              requestSnapshot.data() ??
+              <String, dynamic>{};
+
+          if (data['status'] != 'pending') {
+            throw Exception(
+              'Энэ хүсэлтийг аль хэдийн шийдвэрлэсэн байна.',
+            );
+          }
+
+          transaction.update(
+            requestRef,
+            {
+              'status': 'rejected',
+              'rejectedAt':
+                  FieldValue.serverTimestamp(),
+              'rejectedBy': adminUser.uid,
+            },
+          );
+        },
+      );
+
+      if (!mounted) return;
+
+      _showMessage(
+        'Төрсөн өдрийн хүсэлтийг татгалзлаа.',
+      );
+    } catch (error) {
+      if (!mounted) return;
+
+      _showMessage(
+        'Төрсөн өдрийн хүсэлт татгалзах үед алдаа гарлаа: $error',
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _processingRequestKey = null;
+        });
+      }
+    }
+  }
+
+  Future<void> _searchUserBySixDigitId() async {
+    final id = _userSearchController.text.trim();
+
+    if (!RegExp(r'^\d{6}$').hasMatch(id)) {
+      _showMessage('6 оронтой ID зөв оруулна уу.');
+      return;
+    }
+
+    setState(() {
+      _searchingUser = true;
+      _selectedUserUid = null;
+      _selectedUserData = null;
+    });
+
+    try {
+      final idSnapshot = await _firestore
+          .collection('sixDigitIds')
+          .doc(id)
+          .get();
+
+      if (!idSnapshot.exists) {
+        throw Exception('Ийм ID-тай хэрэглэгч олдсонгүй.');
+      }
+
+      final uid =
+          (idSnapshot.data()?['uid'] ?? '').toString();
+
+      if (uid.isEmpty) {
+        throw Exception('Хэрэглэгчийн UID олдсонгүй.');
+      }
+
+      final userSnapshot = await _firestore
+          .collection('users')
+          .doc(uid)
+          .get();
+
+      if (!userSnapshot.exists) {
+        throw Exception('Хэрэглэгчийн мэдээлэл олдсонгүй.');
+      }
+
+      if (!mounted) return;
+
+      setState(() {
+        _selectedUserUid = uid;
+        _selectedUserData =
+            userSnapshot.data() ?? <String, dynamic>{};
+      });
+    } catch (error) {
+      if (!mounted) return;
+
+      _showMessage(
+        'Хэрэглэгч хайх үед алдаа гарлаа: $error',
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _searchingUser = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _refreshSelectedUser() async {
+    final uid = _selectedUserUid;
+
+    if (uid == null || uid.isEmpty) return;
+
+    final snapshot = await _firestore
+        .collection('users')
+        .doc(uid)
+        .get();
+
+    if (!mounted || !snapshot.exists) return;
+
+    setState(() {
+      _selectedUserData =
+          snapshot.data() ?? <String, dynamic>{};
+    });
+  }
+
+  int _remainingDaysForUser(
+    Map<String, dynamic> data,
+    String type,
+  ) {
+    final now = DateTime.now();
+    final field =
+        type == 'vip' ? 'vipExpiresAt' : 'vvipExpiresAt';
+    final legacy =
+        type == 'vip' ? 'vipDays' : 'vvipDays';
+
+    final value = data[field];
+
+    if (value is Timestamp) {
+      return _calculateRemainingDays(
+        value.toDate(),
+        now,
+      );
+    }
+
+    return _readInt(data[legacy]);
+  }
+
+  Future<void> _changeEntitlementDays({
+    required String type,
+    required bool add,
+  }) async {
+    final uid = _selectedUserUid;
+    final userData = _selectedUserData;
+
+    if (uid == null || userData == null) {
+      _showMessage('Эхлээд хэрэглэгчээ хайна уу.');
+      return;
+    }
+
+    final controller = TextEditingController(text: '1');
+    final label = type == 'vip' ? 'VIP' : 'VVIP';
+
+    final amount = await showDialog<int>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: Text(
+            add
+                ? '$label хоног нэмэх'
+                : '$label хоног хасах',
+          ),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(
+              labelText: 'Хоног',
+              hintText: 'Жишээ: 7',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+              },
+              child: const Text('Болих'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                final value =
+                    int.tryParse(controller.text.trim());
+
+                if (value == null || value <= 0) {
+                  return;
+                }
+
+                Navigator.of(dialogContext).pop(value);
+              },
+              child: Text(
+                add ? 'Нэмэх' : 'Хасах',
+              ),
+            ),
+          ],
+        );
+      },
+    );
+
+    controller.dispose();
+
+    if (amount == null) return;
+
+    final processingKey =
+        'user:$uid:$type:${add ? 'add' : 'remove'}';
+
+    if (_processingRequestKey != null) return;
+
+    setState(() {
+      _processingRequestKey = processingKey;
+    });
+
+    try {
+      await _firestore.runTransaction(
+        (transaction) async {
+          final userRef =
+              _firestore.collection('users').doc(uid);
+
+          final snapshot =
+              await transaction.get(userRef);
+
+          if (!snapshot.exists) {
+            throw Exception('Хэрэглэгч олдсонгүй.');
+          }
+
+          final data =
+              snapshot.data() ?? <String, dynamic>{};
+
+          final now = DateTime.now();
+          final expiresField =
+              type == 'vip'
+                  ? 'vipExpiresAt'
+                  : 'vvipExpiresAt';
+          final daysField =
+              type == 'vip' ? 'vipDays' : 'vvipDays';
+
+          DateTime newExpiresAt;
+
+          if (add) {
+            newExpiresAt =
+                _calculateNewExpiration(
+              userData: data,
+              entitlementType: type,
+              days: amount,
+              now: now,
+            );
+          } else {
+            DateTime currentExpiresAt = now;
+
+            final existing = data[expiresField];
+
+            if (existing is Timestamp &&
+                existing.toDate().isAfter(now)) {
+              currentExpiresAt = existing.toDate();
+            } else {
+              final legacyDays =
+                  _readInt(data[daysField]);
+
+              if (legacyDays > 0) {
+                currentExpiresAt = now.add(
+                  Duration(days: legacyDays),
+                );
+              }
+            }
+
+            newExpiresAt = currentExpiresAt.subtract(
+              Duration(days: amount),
+            );
+
+            if (!newExpiresAt.isAfter(now)) {
+              newExpiresAt = now;
+            }
+          }
+
+          final remainingDays =
+              _calculateRemainingDays(
+            newExpiresAt,
+            now,
+          );
+
+          transaction.update(
+            userRef,
+            {
+              expiresField:
+                  Timestamp.fromDate(newExpiresAt),
+              daysField: remainingDays,
+            },
+          );
+        },
+      );
+
+      await _refreshSelectedUser();
+
+      if (!mounted) return;
+
+      _showMessage(
+        add
+            ? '$label +$amount хоног нэмэгдлээ.'
+            : '$label -$amount хоног хасагдлаа.',
+      );
+    } catch (error) {
+      if (!mounted) return;
+
+      _showMessage(
+        '$label хоног өөрчлөх үед алдаа гарлаа: $error',
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _processingRequestKey = null;
+        });
+      }
+    }
+  }
+
+  Future<void> _editSelectedUserBirthDate() async {
+    final uid = _selectedUserUid;
+    final data = _selectedUserData;
+
+    if (uid == null || data == null) {
+      _showMessage('Эхлээд хэрэглэгчээ хайна уу.');
+      return;
+    }
+
+    final value = data['birthDate'];
+    final currentBirthDate =
+        value is Timestamp
+            ? value.toDate()
+            : DateTime(2000, 1, 1);
+
+    final selected = await showDatePicker(
+      context: context,
+      initialDate: currentBirthDate,
+      firstDate: DateTime(1900, 1, 1),
+      lastDate: DateTime.now(),
+    );
+
+    if (selected == null) return;
+
+    final processingKey = 'user:$uid:birthDate';
+
+    if (_processingRequestKey != null) return;
+
+    setState(() {
+      _processingRequestKey = processingKey;
+    });
+
+    try {
+      await _firestore
+          .collection('users')
+          .doc(uid)
+          .update({
+        'birthDate': Timestamp.fromDate(
+          DateTime(
+            selected.year,
+            selected.month,
+            selected.day,
+          ),
+        ),
+      });
+
+      await _refreshSelectedUser();
+
+      if (!mounted) return;
+
+      _showMessage('Төрсөн өдөр шинэчлэгдлээ.');
+    } catch (error) {
+      if (!mounted) return;
+
+      _showMessage(
+        'Төрсөн өдөр засах үед алдаа гарлаа: $error',
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _processingRequestKey = null;
+        });
+      }
+    }
+  }
+
+  String _formatBirthDate(dynamic value) {
+    if (value is! Timestamp) return '-';
+
+    final date = value.toDate();
+
+    String twoDigits(int number) {
+      return number.toString().padLeft(2, '0');
+    }
+
+    return '${date.year}.'
+        '${twoDigits(date.month)}.'
+        '${twoDigits(date.day)}';
+  }
+
   void _showMessage(String message) {
     if (!mounted) return;
 
@@ -818,45 +1376,62 @@ class _AdminScreenState extends State<AdminScreen> {
             return _buildNoPermission();
           }
 
-          return DefaultTabController(
-            length: 2,
-            child: Column(
-              children: [
-                const Material(
-                  color: AppColors.background,
-                  child: TabBar(
-                    indicatorColor:
-                        AppColors.primary,
-                    labelColor:
-                        AppColors.textPrimary,
-                    unselectedLabelColor:
-                        AppColors.textMuted,
-                    tabs: [
-                      Tab(
-                        icon: Icon(
-                          Icons.payments_outlined,
-                        ),
-                        text: 'Төлбөр',
+          return Column(
+            children: [
+              Material(
+                color: AppColors.background,
+                child: TabBar(
+                  controller: _adminTabController,
+                  isScrollable: true,
+                  indicatorColor: AppColors.primary,
+                  labelColor: AppColors.textPrimary,
+                  unselectedLabelColor:
+                      AppColors.textMuted,
+                  onTap: (index) {
+                    setState(() {
+                      _adminTabIndex = index;
+                    });
+                  },
+                  tabs: const [
+                    Tab(
+                      icon: Icon(
+                        Icons.payments_outlined,
                       ),
-                      Tab(
-                        icon: Icon(
-                          Icons.diamond_outlined,
-                        ),
-                        text: 'XP',
+                      text: 'Төлбөр',
+                    ),
+                    Tab(
+                      icon: Icon(
+                        Icons.diamond_outlined,
                       ),
-                    ],
-                  ),
+                      text: 'XP',
+                    ),
+                    Tab(
+                      icon: Icon(
+                        Icons.cake_outlined,
+                      ),
+                      text: 'Төрсөн өдөр',
+                    ),
+                    Tab(
+                      icon: Icon(
+                        Icons.manage_accounts_outlined,
+                      ),
+                      text: 'Хэрэглэгч',
+                    ),
+                  ],
                 ),
-                Expanded(
-                  child: TabBarView(
-                    children: [
-                      _buildPaymentRequests(),
-                      _buildXpRequests(),
-                    ],
-                  ),
+              ),
+              Expanded(
+                child: IndexedStack(
+                  index: _adminTabIndex,
+                  children: [
+                    _buildPaymentRequests(),
+                    _buildXpRequests(),
+                    _buildBirthdayRequests(),
+                    _buildUserManagement(),
+                  ],
                 ),
-              ],
-            ),
+              ),
+            ],
           );
         },
       ),
@@ -1029,7 +1604,7 @@ class _AdminScreenState extends State<AdminScreen> {
             title:
                 'Хүлээгдэж буй XP хүсэлт алга',
             description:
-                'XP солих эсвэл бэлэглэх хүсэлт энд харагдана.',
+                'XP → VIP хүсэлт энд харагдана.',
           );
         }
 
@@ -1075,6 +1650,633 @@ class _AdminScreenState extends State<AdminScreen> {
           ),
         );
       },
+    );
+  }
+
+  // ---------------------------------------------------------------------
+  // Хэрэглэгч tab.
+  //
+  // Layout history:
+  // 1. Originally the content was a ListView whose only item was a
+  //    Center wrapping a Column. A ListView item gets an UNBOUNDED
+  //    height, and Column defaults to MainAxisSize.max (fill available
+  //    height), so it tried to fill infinite height -> layout exception
+  //    -> tab rendered empty. No compile/analyze error, purely runtime.
+  // 2. That was fixed by mirroring the other tabs' structure: a bounded
+  //    Center wrapping a ConstrainedBox wrapping the ListView. That
+  //    removed the height crash, but on Flutter Web this combination
+  //    can still end up passing a genuinely UNBOUNDED WIDTH down into
+  //    the ListView's internal Viewport/slivers, depending on exactly
+  //    how the ambient constraints from IndexedStack/Expanded resolve.
+  //    That is exactly what "BoxConstraints forces an infinite width"
+  //    plus the resulting sliver/box assertion cascade means.
+  //
+  // Fix: stop relying on ConstrainedBox+Center to infer a bounded width
+  // from ambient constraints. Use LayoutBuilder to read the real
+  // incoming constraints, compute an explicit finite pixel width
+  // ourselves (falling back to the screen width if the incoming
+  // constraint is unbounded), and hand that finite width to the subtree
+  // via a SizedBox before anything else (Row, Expanded, TextField,
+  // buttons, PremiumCard) gets built. Everything below this point is
+  // then guaranteed to receive a finite width, no matter what the
+  // ancestor chain does.
+  // ---------------------------------------------------------------------
+  Widget _buildUserManagement() {
+    final data = _selectedUserData;
+    final uid = _selectedUserUid;
+
+    return LayoutBuilder(
+      builder: (context, outerConstraints) {
+        final double screenWidth = MediaQuery.of(context).size.width;
+
+        // Never trust an ambient max width blindly: fall back to the
+        // screen width if it's unbounded, then clamp to the app's
+        // preferred content width.
+        final double availableWidth = outerConstraints.hasBoundedWidth
+            ? outerConstraints.maxWidth
+            : screenWidth;
+
+        final double contentWidth =
+            availableWidth < AppLayout.profileMaxWidth
+                ? availableWidth
+                : AppLayout.profileMaxWidth;
+
+        return Align(
+          alignment: Alignment.topCenter,
+          child: SizedBox(
+            width: contentWidth,
+            child: ListView(
+              padding: const EdgeInsets.all(AppSpacing.xl),
+              children: [
+                Text(
+                  'Хэрэглэгч удирдах',
+                  style: AppTypography.pageTitle(),
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                Text(
+                  '6 оронтой ID-аар хэрэглэгч хайна.',
+                  style: AppTypography.body(),
+                ),
+                const SizedBox(height: AppSpacing.lg),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        controller: _userSearchController,
+                        keyboardType: TextInputType.number,
+                        maxLength: 6,
+                        onSubmitted: (_) {
+                          if (!_searchingUser) {
+                            _searchUserBySixDigitId();
+                          }
+                        },
+                        decoration: const InputDecoration(
+                          labelText: '6 оронтой ID',
+                          hintText: 'Жишээ: 123456',
+                          counterText: '',
+                          prefixIcon: Icon(
+                            Icons.badge_outlined,
+                          ),
+                        ),
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.md),
+                SizedBox(
+                  // Explicit width AND height: as a non-flex Row child
+                  // this must never be asked to report an intrinsic
+                  // width under an unbounded main-axis layout pass.
+                  width: 120,
+                  height: 52,
+                  child: ElevatedButton.icon(
+                    onPressed: _searchingUser
+                        ? null
+                        : _searchUserBySixDigitId,
+                    icon: _searchingUser
+                        ? const SizedBox(
+                            width: 17,
+                            height: 17,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(
+                            Icons.search_rounded,
+                          ),
+                    label: const Text('Хайх'),
+                  ),
+                ),
+              ],
+            ),
+            if (data == null || uid == null) ...[
+              const SizedBox(height: AppSpacing.xxl),
+              PremiumCard(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.manage_search_rounded,
+                      size: 44,
+                      color: AppColors.textMuted,
+                    ),
+                    const SizedBox(height: AppSpacing.md),
+                    Text(
+                      'Хэрэглэгчийн 6 оронтой ID-г оруулаад хайна уу.',
+                      textAlign: TextAlign.center,
+                      style: AppTypography.body(),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+            if (data != null && uid != null) ...[
+              const SizedBox(height: AppSpacing.xxl),
+              PremiumCard(
+                elevated: true,
+                radius: AppRadius.premium,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.account_circle_rounded,
+                          size: 48,
+                          color: AppColors.primaryLight,
+                        ),
+                        const SizedBox(
+                          width: AppSpacing.md,
+                        ),
+                        Expanded(
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment:
+                                CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                (data['username'] ?? '-')
+                                    .toString(),
+                                style:
+                                    AppTypography.cardTitle(),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                'ID: ${(data['sixDigitId'] ?? _userSearchController.text.trim())}',
+                                style: AppTypography.meta(),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const Padding(
+                      padding: EdgeInsets.symmetric(
+                        vertical: AppSpacing.lg,
+                      ),
+                      child: Divider(
+                        height: 1,
+                        color: AppColors.border,
+                      ),
+                    ),
+                    _AdminInfoRow(
+                      label: 'Gmail',
+                      value:
+                          (data['email'] ?? '-').toString(),
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    _AdminInfoRow(
+                      label: 'Утас',
+                      value: (data['phoneNumber'] ?? '-')
+                          .toString(),
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    _AdminInfoRow(
+                      label: 'Төрсөн өдөр',
+                      value: _formatBirthDate(
+                        data['birthDate'],
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    _AdminInfoRow(
+                      label: 'XP',
+                      value: '${_readInt(data['xp'])} XP',
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    _AdminInfoRow(
+                      label: 'VIP үлдэгдэл',
+                      value:
+                          '${_remainingDaysForUser(data, 'vip')} хоног',
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    _AdminInfoRow(
+                      label: 'VVIP үлдэгдэл',
+                      value:
+                          '${_remainingDaysForUser(data, 'vvip')} хоног',
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: AppSpacing.lg),
+              PremiumCard(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'VIP эрх',
+                      style: AppTypography.cardTitle(
+                        color: AppColors.vipAccent,
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.md),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed:
+                                _processingRequestKey != null
+                                    ? null
+                                    : () =>
+                                        _changeEntitlementDays(
+                                          type: 'vip',
+                                          add: false,
+                                        ),
+                            icon: const Icon(
+                              Icons.remove_rounded,
+                            ),
+                            label: const Text('Хоног хасах'),
+                          ),
+                        ),
+                        const SizedBox(width: AppSpacing.md),
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            onPressed:
+                                _processingRequestKey != null
+                                    ? null
+                                    : () =>
+                                        _changeEntitlementDays(
+                                          type: 'vip',
+                                          add: true,
+                                        ),
+                            icon: const Icon(
+                              Icons.add_rounded,
+                            ),
+                            label: const Text('Хоног нэмэх'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: AppSpacing.lg),
+              PremiumCard(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'VVIP эрх',
+                      style: AppTypography.cardTitle(
+                        color: AppColors.vvipAccent,
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.md),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed:
+                                _processingRequestKey != null
+                                    ? null
+                                    : () =>
+                                        _changeEntitlementDays(
+                                          type: 'vvip',
+                                          add: false,
+                                        ),
+                            icon: const Icon(
+                              Icons.remove_rounded,
+                            ),
+                            label: const Text('Хоног хасах'),
+                          ),
+                        ),
+                        const SizedBox(width: AppSpacing.md),
+                        Expanded(
+                          child: ElevatedButton.icon(
+                            onPressed:
+                                _processingRequestKey != null
+                                    ? null
+                                    : () =>
+                                        _changeEntitlementDays(
+                                          type: 'vvip',
+                                          add: true,
+                                        ),
+                            icon: const Icon(
+                              Icons.add_rounded,
+                            ),
+                            label: const Text('Хоног нэмэх'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: AppSpacing.lg),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: _processingRequestKey != null
+                      ? null
+                      : _editSelectedUserBirthDate,
+                  icon: const Icon(Icons.cake_outlined),
+                  label: const Text('Төрсөн өдөр засах'),
+                ),
+              ),
+            ],
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildBirthdayRequests() {
+    return StreamBuilder<
+        QuerySnapshot<Map<String, dynamic>>>(
+      stream: _firestore
+          .collection('birthdayGiftRequests')
+          .where(
+            'status',
+            isEqualTo: 'pending',
+          )
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return _buildError(
+            'Төрсөн өдрийн хүсэлт унших үед алдаа гарлаа:\n'
+            '${snapshot.error}',
+          );
+        }
+
+        if (snapshot.connectionState ==
+            ConnectionState.waiting) {
+          return const Center(
+            child: CircularProgressIndicator(
+              color: AppColors.primary,
+            ),
+          );
+        }
+
+        final requests =
+            snapshot.data?.docs ?? [];
+
+        _sortByCreatedAt(requests);
+
+        if (requests.isEmpty) {
+          return _buildEmpty(
+            icon: Icons.cake_outlined,
+            title:
+                'Хүлээгдэж буй төрсөн өдрийн хүсэлт алга',
+            description:
+                'VIP +7 хоногийн төрсөн өдрийн хүсэлт энд харагдана.',
+          );
+        }
+
+        return Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(
+              maxWidth:
+                  AppLayout.profileMaxWidth,
+            ),
+            child: ListView(
+              padding: const EdgeInsets.all(
+                AppSpacing.xl,
+              ),
+              children: [
+                Text(
+                  'Төрсөн өдрийн хүсэлтүүд',
+                  style:
+                      AppTypography.pageTitle(),
+                ),
+                const SizedBox(
+                  height: AppSpacing.sm,
+                ),
+                Text(
+                  '${requests.length} хүсэлт байна',
+                  style: AppTypography.body(),
+                ),
+                const SizedBox(
+                  height: AppSpacing.xl,
+                ),
+                ...requests.map(
+                  (document) => Padding(
+                    padding:
+                        const EdgeInsets.only(
+                      bottom: AppSpacing.lg,
+                    ),
+                    child:
+                        _buildBirthdayCard(
+                      document,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildBirthdayCard(
+    QueryDocumentSnapshot<
+            Map<String, dynamic>>
+        document,
+  ) {
+    final data = document.data();
+
+    final sixDigitId =
+        (data['sixDigitId'] ?? '-')
+            .toString();
+
+    final days =
+        _readInt(data['days']);
+
+    final year =
+        _readInt(data['year']);
+
+    final createdAt =
+        data['createdAt'] as Timestamp?;
+
+    final processing =
+        _processingRequestKey ==
+        'birthday:${document.id}';
+
+    return PremiumCard(
+      elevated: true,
+      radius: AppRadius.premium,
+      child: Column(
+        crossAxisAlignment:
+            CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 46,
+                height: 46,
+                decoration: BoxDecoration(
+                  color: AppColors.gold.withValues(
+                    alpha: 0.14,
+                  ),
+                  borderRadius:
+                      BorderRadius.circular(
+                    14,
+                  ),
+                ),
+                child: const Icon(
+                  Icons.cake_rounded,
+                  color: AppColors.gold,
+                ),
+              ),
+              const SizedBox(
+                width: AppSpacing.md,
+              ),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment:
+                      CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Төрсөн өдрийн бэлэг',
+                      style:
+                          AppTypography.cardTitle(
+                        color: AppColors.gold,
+                      ),
+                    ),
+                    const SizedBox(
+                      height: 2,
+                    ),
+                    Text(
+                      'VIP +$days хоног',
+                      style:
+                          AppTypography.meta(),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const Padding(
+            padding:
+                EdgeInsets.symmetric(
+              vertical: AppSpacing.lg,
+            ),
+            child: Divider(
+              height: 1,
+              color: AppColors.border,
+            ),
+          ),
+          _AdminInfoRow(
+            label: 'Хэрэглэгчийн ID',
+            value: sixDigitId,
+          ),
+          const SizedBox(
+            height: AppSpacing.sm,
+          ),
+          _AdminInfoRow(
+            label: 'Бэлгийн эрх',
+            value: 'VIP +$days хоног',
+          ),
+          const SizedBox(
+            height: AppSpacing.sm,
+          ),
+          _AdminInfoRow(
+            label: 'Он',
+            value: '$year',
+          ),
+          if (createdAt != null) ...[
+            const SizedBox(
+              height: AppSpacing.sm,
+            ),
+            _AdminInfoRow(
+              label: 'Хүсэлт илгээсэн',
+              value: _formatDate(
+                createdAt.toDate(),
+              ),
+            ),
+          ],
+          const SizedBox(
+            height: AppSpacing.lg,
+          ),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  onPressed: processing ||
+                          _processingRequestKey != null
+                      ? null
+                      : () =>
+                          _rejectBirthdayRequest(
+                            document.id,
+                          ),
+                  style:
+                      OutlinedButton.styleFrom(
+                    foregroundColor:
+                        AppColors.danger,
+                    side: const BorderSide(
+                      color:
+                          AppColors.danger,
+                    ),
+                  ),
+                  icon: const Icon(
+                    Icons.close_rounded,
+                  ),
+                  label: const Text(
+                    'Татгалзах',
+                  ),
+                ),
+              ),
+              const SizedBox(
+                width: AppSpacing.md,
+              ),
+              Expanded(
+                child:
+                    ElevatedButton.icon(
+                  onPressed: processing ||
+                          _processingRequestKey != null
+                      ? null
+                      : () =>
+                          _approveBirthdayRequest(
+                            document.id,
+                          ),
+                  icon: processing
+                      ? const SizedBox(
+                          width: 17,
+                          height: 17,
+                          child:
+                              CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color:
+                                Colors.white,
+                          ),
+                        )
+                      : const Icon(
+                          Icons.check_rounded,
+                        ),
+                  label: Text(
+                    processing
+                        ? '...'
+                        : 'Батлах',
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
@@ -1328,62 +2530,22 @@ class _AdminScreenState extends State<AdminScreen> {
   }
 
   Widget _buildXpCard(
-    QueryDocumentSnapshot<
-            Map<String, dynamic>>
-        document,
+    QueryDocumentSnapshot<Map<String, dynamic>> document,
   ) {
     final data = document.data();
-
-    final type =
-        (data['entitlementType'] ?? '')
-            .toString();
-
-    final displayType =
-        type == 'vvip' ? 'VVIP' : 'VIP';
-
-    final mode =
-        (data['mode'] ?? 'self')
-            .toString();
-
-    final isGift = mode == 'gift';
-
-    final days =
-        _readInt(data['days']);
-
-    final xpCost =
-        _readInt(data['xpCost']);
-
-    final senderId =
-        (data['sixDigitId'] ?? '-')
-            .toString();
-
-    final recipientId =
-        (data['recipientSixDigitId'] ??
-                senderId)
-            .toString();
-
-    final recipientUsername =
-        (data['recipientUsername'] ?? '')
-            .toString();
-
-    final createdAt =
-        data['createdAt'] as Timestamp?;
-
+    final days = _readInt(data['days']);
+    final xpCost = _readInt(data['xpCost']);
+    final sixDigitId =
+        (data['sixDigitId'] ?? '-').toString();
+    final createdAt = data['createdAt'] as Timestamp?;
     final processing =
-        _processingRequestKey ==
-        'xp:${document.id}';
-
-    final accent =
-        type == 'vvip'
-            ? AppColors.vvipAccent
-            : AppColors.vipAccent;
+        _processingRequestKey == 'xp:${document.id}';
 
     return PremiumCard(
       elevated: true,
       radius: AppRadius.premium,
       child: Column(
-        crossAxisAlignment:
-            CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
@@ -1391,48 +2553,32 @@ class _AdminScreenState extends State<AdminScreen> {
                 width: 46,
                 height: 46,
                 decoration: BoxDecoration(
-                  color: accent.withValues(
+                  color: AppColors.vipAccent.withValues(
                     alpha: 0.14,
                   ),
-                  borderRadius:
-                      BorderRadius.circular(
-                    14,
-                  ),
+                  borderRadius: BorderRadius.circular(14),
                 ),
-                child: Icon(
-                  isGift
-                      ? Icons.card_giftcard_rounded
-                      : type == 'vvip'
-                          ? Icons.diamond_rounded
-                          : Icons
-                              .workspace_premium_rounded,
-                  color: accent,
+                child: const Icon(
+                  Icons.workspace_premium_rounded,
+                  color: AppColors.vipAccent,
                 ),
               ),
-              const SizedBox(
-                width: AppSpacing.md,
-              ),
+              const SizedBox(width: AppSpacing.md),
               Expanded(
                 child: Column(
                   crossAxisAlignment:
                       CrossAxisAlignment.start,
                   children: [
                     Text(
-                      isGift
-                          ? '$displayType • Бэлэг'
-                          : '$displayType • Өөртөө',
-                      style:
-                          AppTypography.cardTitle(
-                        color: accent,
+                      'VIP • Өөртөө',
+                      style: AppTypography.cardTitle(
+                        color: AppColors.vipAccent,
                       ),
                     ),
-                    const SizedBox(
-                      height: 2,
-                    ),
+                    const SizedBox(height: 2),
                     Text(
-                      '$xpCost XP → $days хоног',
-                      style:
-                          AppTypography.meta(),
+                      '$xpCost XP → $days VIP хоног',
+                      style: AppTypography.meta(),
                     ),
                   ],
                 ),
@@ -1440,8 +2586,7 @@ class _AdminScreenState extends State<AdminScreen> {
             ],
           ),
           const Padding(
-            padding:
-                EdgeInsets.symmetric(
+            padding: EdgeInsets.symmetric(
               vertical: AppSpacing.lg,
             ),
             child: Divider(
@@ -1450,59 +2595,27 @@ class _AdminScreenState extends State<AdminScreen> {
             ),
           ),
           _AdminInfoRow(
-            label: 'Илгээгчийн ID',
-            value: senderId,
+            label: 'Хэрэглэгчийн ID',
+            value: sixDigitId,
           ),
-          if (isGift) ...[
-            const SizedBox(
-              height: AppSpacing.sm,
-            ),
-            _AdminInfoRow(
-              label: 'Хүлээн авагч',
-              value:
-                  recipientUsername.isEmpty
-                      ? '-'
-                      : recipientUsername,
-            ),
-            const SizedBox(
-              height: AppSpacing.sm,
-            ),
-            _AdminInfoRow(
-              label: 'Хүлээн авагч ID',
-              value: recipientId,
-            ),
-          ],
-          const SizedBox(
-            height: AppSpacing.sm,
-          ),
+          const SizedBox(height: AppSpacing.sm),
           _AdminInfoRow(
             label: 'Зарцуулах XP',
             value: '-$xpCost XP',
           ),
-          const SizedBox(
-            height: AppSpacing.sm,
-          ),
+          const SizedBox(height: AppSpacing.sm),
           _AdminInfoRow(
-            label: isGift
-                ? 'Бэлэглэх эрх'
-                : 'Нэмэгдэх эрх',
-            value:
-                '$displayType +$days хоног',
+            label: 'Нэмэгдэх эрх',
+            value: 'VIP +$days хоног',
           ),
           if (createdAt != null) ...[
-            const SizedBox(
-              height: AppSpacing.sm,
-            ),
+            const SizedBox(height: AppSpacing.sm),
             _AdminInfoRow(
               label: 'Хүсэлт илгээсэн',
-              value: _formatDate(
-                createdAt.toDate(),
-              ),
+              value: _formatDate(createdAt.toDate()),
             ),
           ],
-          const SizedBox(
-            height: AppSpacing.lg,
-          ),
+          const SizedBox(height: AppSpacing.lg),
           Row(
             children: [
               Expanded(
@@ -1510,58 +2623,36 @@ class _AdminScreenState extends State<AdminScreen> {
                   onPressed: processing ||
                           _processingRequestKey != null
                       ? null
-                      : () =>
-                          _rejectXpRequest(
-                            document.id,
-                          ),
-                  style:
-                      OutlinedButton.styleFrom(
-                    foregroundColor:
-                        AppColors.danger,
+                      : () => _rejectXpRequest(document.id),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.danger,
                     side: const BorderSide(
-                      color:
-                          AppColors.danger,
+                      color: AppColors.danger,
                     ),
                   ),
-                  icon: const Icon(
-                    Icons.close_rounded,
-                  ),
-                  label: const Text(
-                    'Татгалзах',
-                  ),
+                  icon: const Icon(Icons.close_rounded),
+                  label: const Text('Татгалзах'),
                 ),
               ),
-              const SizedBox(
-                width: AppSpacing.md,
-              ),
+              const SizedBox(width: AppSpacing.md),
               Expanded(
-                child:
-                    ElevatedButton.icon(
+                child: ElevatedButton.icon(
                   onPressed: processing ||
                           _processingRequestKey != null
                       ? null
-                      : () =>
-                          _approveXpRequest(
-                            document.id,
-                          ),
+                      : () => _approveXpRequest(document.id),
                   icon: processing
                       ? const SizedBox(
                           width: 17,
                           height: 17,
-                          child:
-                              CircularProgressIndicator(
+                          child: CircularProgressIndicator(
                             strokeWidth: 2,
-                            color:
-                                Colors.white,
+                            color: Colors.white,
                           ),
                         )
-                      : const Icon(
-                          Icons.check_rounded,
-                        ),
+                      : const Icon(Icons.check_rounded),
                   label: Text(
-                    processing
-                        ? '...'
-                        : 'Батлах',
+                    processing ? '...' : 'Батлах',
                   ),
                 ),
               ),

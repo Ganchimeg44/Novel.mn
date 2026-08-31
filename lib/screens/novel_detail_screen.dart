@@ -1,3 +1,5 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
@@ -19,25 +21,192 @@ class NovelDetailScreen extends StatefulWidget {
 }
 
 class _NovelDetailScreenState extends State<NovelDetailScreen> {
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+
   int _selectedTab = 0;
+
+  bool _loadingAccess = true;
+  bool _hasVip = false;
+  bool _hasVvip = false;
 
   Novel get novel => widget.novel;
 
-  void _openChapter(int index) {
-    final chapter = novel.chapters[index];
+  @override
+  void initState() {
+    super.initState();
+    _loadUserAccess();
+  }
 
-    if (!chapter.isFree) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          backgroundColor: AppColors.surfaceElevated,
-          content: Text(
-            'Энэ бүлэг түгжээтэй байна.',
-            style: GoogleFonts.poppins(
-              color: AppColors.textPrimary,
-            ),
+  Future<void> _loadUserAccess() async {
+    final firebaseUser = _auth.currentUser;
+
+    if (firebaseUser == null) {
+      if (!mounted) return;
+
+      setState(() {
+        _hasVip = false;
+        _hasVvip = false;
+        _loadingAccess = false;
+      });
+
+      return;
+    }
+
+    try {
+      final snapshot = await _firestore
+          .collection('users')
+          .doc(firebaseUser.uid)
+          .get();
+
+      final data = snapshot.data() ?? <String, dynamic>{};
+
+      final now = DateTime.now();
+
+      bool hasActiveAccess({
+        required String expiresField,
+        required String legacyDaysField,
+      }) {
+        final expiresAt = data[expiresField];
+
+        if (expiresAt is Timestamp) {
+          return expiresAt.toDate().isAfter(now);
+        }
+
+        final legacyValue = data[legacyDaysField];
+
+        int legacyDays = 0;
+
+        if (legacyValue is int) {
+          legacyDays = legacyValue;
+        } else if (legacyValue is num) {
+          legacyDays = legacyValue.toInt();
+        } else {
+          legacyDays =
+              int.tryParse(legacyValue?.toString() ?? '') ?? 0;
+        }
+
+        return legacyDays > 0;
+      }
+
+      var vip = hasActiveAccess(
+        expiresField: 'vipExpiresAt',
+        legacyDaysField: 'vipDays',
+      );
+
+      var vvip = hasActiveAccess(
+        expiresField: 'vvipExpiresAt',
+        legacyDaysField: 'vvipDays',
+      );
+
+      // Админ бүх контентыг шалгах боломжтой.
+      if (data['isAdmin'] == true) {
+        vip = true;
+        vvip = true;
+      }
+
+      if (!mounted) return;
+
+      setState(() {
+        _hasVip = vip;
+        _hasVvip = vvip;
+        _loadingAccess = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+
+      setState(() {
+        _hasVip = false;
+        _hasVvip = false;
+        _loadingAccess = false;
+      });
+    }
+  }
+
+  bool _canAccessChapter(Chapter chapter) {
+    switch (chapter.accessLevel) {
+      case AccessLevel.free:
+        return true;
+
+      case AccessLevel.vip:
+        return _hasVip || _hasVvip;
+
+      case AccessLevel.vvip:
+        return _hasVvip;
+    }
+  }
+
+  String _chapterAccessName(Chapter chapter) {
+    switch (chapter.accessLevel) {
+      case AccessLevel.free:
+        return 'Үнэгүй';
+
+      case AccessLevel.vip:
+        return 'VIP';
+
+      case AccessLevel.vvip:
+        return 'VVIP';
+    }
+  }
+
+  Color _chapterAccessColor(Chapter chapter) {
+    switch (chapter.accessLevel) {
+      case AccessLevel.free:
+        return AppColors.success;
+
+      case AccessLevel.vip:
+        return AppColors.vipAccent;
+
+      case AccessLevel.vvip:
+        return AppColors.vvipAccent;
+    }
+  }
+
+  void _showLockedMessage(Chapter chapter) {
+    String message;
+
+    switch (chapter.accessLevel) {
+      case AccessLevel.free:
+        return;
+
+      case AccessLevel.vip:
+        message =
+            'Энэ бүлгийг уншихын тулд VIP эсвэл VVIP эрх шаардлагатай.';
+        break;
+
+      case AccessLevel.vvip:
+        message =
+            'Энэ бүлгийг уншихын тулд VVIP эрх шаардлагатай.';
+        break;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: AppColors.surfaceElevated,
+        content: Text(
+          message,
+          style: GoogleFonts.poppins(
+            color: AppColors.textPrimary,
           ),
         ),
+      ),
+    );
+  }
+
+  void _openChapter(int index) {
+    if (_loadingAccess) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Эрхийн мэдээлэл шалгаж байна...'),
+        ),
       );
+      return;
+    }
+
+    final chapter = novel.chapters[index];
+
+    if (!_canAccessChapter(chapter)) {
+      _showLockedMessage(chapter);
       return;
     }
 
@@ -55,25 +224,41 @@ class _NovelDetailScreenState extends State<NovelDetailScreen> {
     if (novel.chapters.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Одоогоор бүлэг нэмэгдээгүй байна.'),
+          content: Text(
+            'Одоогоор бүлэг нэмэгдээгүй байна.',
+          ),
         ),
       );
       return;
     }
 
-    final firstFreeIndex =
-        novel.chapters.indexWhere((chapter) => chapter.isFree);
-
-    if (firstFreeIndex == -1) {
+    if (_loadingAccess) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Унших боломжтой үнэгүй бүлэг алга.'),
+          content: Text(
+            'Эрхийн мэдээлэл шалгаж байна...',
+          ),
         ),
       );
       return;
     }
 
-    _openChapter(firstFreeIndex);
+    final firstAccessibleIndex = novel.chapters.indexWhere(
+      _canAccessChapter,
+    );
+
+    if (firstAccessibleIndex == -1) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Танд унших боломжтой бүлэг алга.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    _openChapter(firstAccessibleIndex);
   }
 
   @override
@@ -87,7 +272,7 @@ class _NovelDetailScreenState extends State<NovelDetailScreen> {
         actions: [
           IconButton(
             onPressed: () {
-              // Favorite backend нэмэгдэх үед энд холбоно.
+              // Favorite backend дараа холбоно.
             },
             icon: const Icon(
               Icons.favorite_border_rounded,
@@ -96,14 +281,16 @@ class _NovelDetailScreenState extends State<NovelDetailScreen> {
           ),
           IconButton(
             onPressed: () {
-              // Share logic дараа нь холбоно.
+              // Share logic дараа холбоно.
             },
             icon: const Icon(
               Icons.ios_share_rounded,
               color: AppColors.textPrimary,
             ),
           ),
-          const SizedBox(width: AppSpacing.sm),
+          const SizedBox(
+            width: AppSpacing.sm,
+          ),
         ],
       ),
       body: SafeArea(
@@ -121,13 +308,21 @@ class _NovelDetailScreenState extends State<NovelDetailScreen> {
               ),
               children: [
                 _buildHero(),
-                const SizedBox(height: AppSpacing.xxl),
+                const SizedBox(
+                  height: AppSpacing.xxl,
+                ),
                 _buildDescription(),
-                const SizedBox(height: AppSpacing.xxl),
+                const SizedBox(
+                  height: AppSpacing.xxl,
+                ),
                 _buildReadButton(),
-                const SizedBox(height: AppSpacing.xxxl),
+                const SizedBox(
+                  height: AppSpacing.xxxl,
+                ),
                 _buildTabs(),
-                const SizedBox(height: AppSpacing.lg),
+                const SizedBox(
+                  height: AppSpacing.lg,
+                ),
                 if (_selectedTab == 0)
                   _buildChapterList()
                 else
@@ -149,15 +344,20 @@ class _NovelDetailScreenState extends State<NovelDetailScreen> {
           return PremiumCard(
             elevated: true,
             radius: AppRadius.premium,
-            padding: const EdgeInsets.all(AppSpacing.xl),
+            padding: const EdgeInsets.all(
+              AppSpacing.xl,
+            ),
             child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment:
+                  CrossAxisAlignment.start,
               children: [
                 _buildCover(
                   width: 190,
                   height: 270,
                 ),
-                const SizedBox(width: AppSpacing.xxl),
+                const SizedBox(
+                  width: AppSpacing.xxl,
+                ),
                 Expanded(
                   child: _buildNovelInfo(
                     centered: false,
@@ -174,7 +374,9 @@ class _NovelDetailScreenState extends State<NovelDetailScreen> {
               width: 160,
               height: 230,
             ),
-            const SizedBox(height: AppSpacing.xl),
+            const SizedBox(
+              height: AppSpacing.xl,
+            ),
             _buildNovelInfo(
               centered: true,
             ),
@@ -192,23 +394,36 @@ class _NovelDetailScreenState extends State<NovelDetailScreen> {
       width: width,
       height: height,
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(AppRadius.premium),
+        borderRadius: BorderRadius.circular(
+          AppRadius.premium,
+        ),
         boxShadow: [
           BoxShadow(
-            color: AppColors.primary.withValues(alpha: 0.16),
+            color: AppColors.primary.withValues(
+              alpha: 0.16,
+            ),
             blurRadius: 28,
-            offset: const Offset(0, 12),
+            offset: const Offset(
+              0,
+              12,
+            ),
           ),
         ],
       ),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(AppRadius.premium),
+        borderRadius: BorderRadius.circular(
+          AppRadius.premium,
+        ),
         child: Image.asset(
           novel.coverImage,
           width: width,
           height: height,
           fit: BoxFit.cover,
-          errorBuilder: (context, error, stackTrace) {
+          errorBuilder: (
+            context,
+            error,
+            stackTrace,
+          ) {
             return Container(
               color: AppColors.surfaceElevated,
               alignment: Alignment.center,
@@ -227,61 +442,83 @@ class _NovelDetailScreenState extends State<NovelDetailScreen> {
   Widget _buildNovelInfo({
     required bool centered,
   }) {
-    final crossAxisAlignment =
-        centered ? CrossAxisAlignment.center : CrossAxisAlignment.start;
+    final crossAxisAlignment = centered
+        ? CrossAxisAlignment.center
+        : CrossAxisAlignment.start;
 
     return Column(
       crossAxisAlignment: crossAxisAlignment,
       children: [
         Text(
           novel.title,
-          textAlign: centered ? TextAlign.center : TextAlign.left,
+          textAlign: centered
+              ? TextAlign.center
+              : TextAlign.left,
           style: AppTypography.novelTitle(
             fontSize: 28,
           ),
         ),
-        const SizedBox(height: AppSpacing.xs),
+        const SizedBox(
+          height: AppSpacing.xs,
+        ),
         Text(
           novel.author,
-          textAlign: centered ? TextAlign.center : TextAlign.left,
+          textAlign: centered
+              ? TextAlign.center
+              : TextAlign.left,
           style: AppTypography.body(
             color: AppColors.goldLight,
           ),
         ),
-        const SizedBox(height: AppSpacing.md),
+        const SizedBox(
+          height: AppSpacing.md,
+        ),
         Wrap(
-          alignment:
-              centered ? WrapAlignment.center : WrapAlignment.start,
+          alignment: centered
+              ? WrapAlignment.center
+              : WrapAlignment.start,
           spacing: AppSpacing.sm,
           runSpacing: AppSpacing.sm,
-          children: novel.genre.map((genre) {
-            return Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: AppSpacing.md,
-                vertical: 6,
-              ),
-              decoration: BoxDecoration(
-                color: AppColors.primary.withValues(alpha: 0.10),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color: AppColors.primary.withValues(alpha: 0.35),
+          children: novel.genre.map(
+            (genre) {
+              return Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.md,
+                  vertical: 6,
                 ),
-              ),
-              child: Text(
-                genre,
-                style: GoogleFonts.poppins(
-                  color: AppColors.primaryLight,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w500,
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withValues(
+                    alpha: 0.10,
+                  ),
+                  borderRadius:
+                      BorderRadius.circular(20),
+                  border: Border.all(
+                    color:
+                        AppColors.primary.withValues(
+                      alpha: 0.35,
+                    ),
+                  ),
                 ),
-              ),
-            );
-          }).toList(),
+                child: Text(
+                  genre,
+                  style: GoogleFonts.poppins(
+                    color: AppColors.primaryLight,
+                    fontSize: 11,
+                    fontWeight:
+                        FontWeight.w500,
+                  ),
+                ),
+              );
+            },
+          ).toList(),
         ),
-        const SizedBox(height: AppSpacing.xl),
+        const SizedBox(
+          height: AppSpacing.xl,
+        ),
         Row(
-          mainAxisSize:
-              centered ? MainAxisSize.min : MainAxisSize.max,
+          mainAxisSize: centered
+              ? MainAxisSize.min
+              : MainAxisSize.max,
           mainAxisAlignment: centered
               ? MainAxisAlignment.center
               : MainAxisAlignment.start,
@@ -289,14 +526,19 @@ class _NovelDetailScreenState extends State<NovelDetailScreen> {
             _StatItem(
               icon: Icons.star_rounded,
               iconColor: AppColors.gold,
-              value: novel.rating.toStringAsFixed(1),
+              value:
+                  novel.rating.toStringAsFixed(1),
               label: 'Үнэлгээ',
             ),
-            const SizedBox(width: AppSpacing.xxl),
+            const SizedBox(
+              width: AppSpacing.xxl,
+            ),
             _StatItem(
               icon: Icons.menu_book_rounded,
-              iconColor: AppColors.primaryLight,
-              value: '${novel.chapters.length}',
+              iconColor:
+                  AppColors.primaryLight,
+              value:
+                  '${novel.chapters.length}',
               label: 'Бүлэг',
             ),
           ],
@@ -307,13 +549,16 @@ class _NovelDetailScreenState extends State<NovelDetailScreen> {
 
   Widget _buildDescription() {
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment:
+          CrossAxisAlignment.start,
       children: [
         Text(
           'Тайлбар',
           style: AppTypography.sectionTitle(),
         ),
-        const SizedBox(height: AppSpacing.md),
+        const SizedBox(
+          height: AppSpacing.md,
+        ),
         Text(
           novel.description,
           style: GoogleFonts.poppins(
@@ -330,12 +575,24 @@ class _NovelDetailScreenState extends State<NovelDetailScreen> {
     return SizedBox(
       width: double.infinity,
       child: ElevatedButton.icon(
-        onPressed: _startReading,
-        icon: const Icon(
-          Icons.menu_book_rounded,
-        ),
-        label: const Text(
-          'Уншиж эхлэх',
+        onPressed:
+            _loadingAccess ? null : _startReading,
+        icon: _loadingAccess
+            ? const SizedBox(
+                width: 18,
+                height: 18,
+                child:
+                    CircularProgressIndicator(
+                  strokeWidth: 2,
+                ),
+              )
+            : const Icon(
+                Icons.menu_book_rounded,
+              ),
+        label: Text(
+          _loadingAccess
+              ? 'Эрх шалгаж байна...'
+              : 'Уншиж эхлэх',
         ),
       ),
     );
@@ -346,7 +603,9 @@ class _NovelDetailScreenState extends State<NovelDetailScreen> {
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
         color: AppColors.surface,
-        borderRadius: BorderRadius.circular(AppRadius.button),
+        borderRadius: BorderRadius.circular(
+          AppRadius.button,
+        ),
         border: Border.all(
           color: AppColors.border,
         ),
@@ -356,7 +615,8 @@ class _NovelDetailScreenState extends State<NovelDetailScreen> {
           Expanded(
             child: _DetailTab(
               label: 'Бүлгүүд',
-              icon: Icons.format_list_numbered_rounded,
+              icon:
+                  Icons.format_list_numbered_rounded,
               selected: _selectedTab == 0,
               onTap: () {
                 setState(() {
@@ -368,7 +628,8 @@ class _NovelDetailScreenState extends State<NovelDetailScreen> {
           Expanded(
             child: _DetailTab(
               label: 'Сэтгэгдэл',
-              icon: Icons.chat_bubble_outline_rounded,
+              icon:
+                  Icons.chat_bubble_outline_rounded,
               selected: _selectedTab == 1,
               onTap: () {
                 setState(() {
@@ -404,11 +665,21 @@ class _NovelDetailScreenState extends State<NovelDetailScreen> {
             ),
           ],
         ),
-        const SizedBox(height: AppSpacing.md),
+        const SizedBox(
+          height: AppSpacing.md,
+        ),
         ...List.generate(
           novel.chapters.length,
           (index) {
-            final chapter = novel.chapters[index];
+            final chapter =
+                novel.chapters[index];
+
+            final canAccess =
+                !_loadingAccess &&
+                    _canAccessChapter(chapter);
+
+            final accessColor =
+                _chapterAccessColor(chapter);
 
             return Padding(
               padding: const EdgeInsets.only(
@@ -417,15 +688,22 @@ class _NovelDetailScreenState extends State<NovelDetailScreen> {
               child: Material(
                 color: Colors.transparent,
                 child: InkWell(
-                  onTap: () => _openChapter(index),
+                  onTap: () =>
+                      _openChapter(index),
                   borderRadius:
-                      BorderRadius.circular(AppRadius.card),
+                      BorderRadius.circular(
+                    AppRadius.card,
+                  ),
                   child: Container(
-                    padding: const EdgeInsets.all(AppSpacing.lg),
+                    padding: const EdgeInsets.all(
+                      AppSpacing.lg,
+                    ),
                     decoration: BoxDecoration(
                       color: AppColors.surface,
                       borderRadius:
-                          BorderRadius.circular(AppRadius.card),
+                          BorderRadius.circular(
+                        AppRadius.card,
+                      ),
                       border: Border.all(
                         color: AppColors.border,
                       ),
@@ -435,77 +713,117 @@ class _NovelDetailScreenState extends State<NovelDetailScreen> {
                         Container(
                           width: 42,
                           height: 42,
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            color: chapter.isFree
-                                ? AppColors.primary.withValues(
+                          alignment:
+                              Alignment.center,
+                          decoration:
+                              BoxDecoration(
+                            color: canAccess
+                                ? accessColor
+                                    .withValues(
                                     alpha: 0.12,
                                   )
-                                : AppColors.surfaceElevated,
-                            borderRadius: BorderRadius.circular(12),
+                                : AppColors
+                                    .surfaceElevated,
+                            borderRadius:
+                                BorderRadius
+                                    .circular(12),
                           ),
-                          child: chapter.isFree
+                          child: canAccess
                               ? Text(
                                   '${chapter.number}',
-                                  style: GoogleFonts.poppins(
-                                    color: AppColors.primaryLight,
-                                    fontWeight: FontWeight.w600,
+                                  style: GoogleFonts
+                                      .poppins(
+                                    color:
+                                        accessColor,
+                                    fontWeight:
+                                        FontWeight
+                                            .w600,
                                   ),
                                 )
                               : const Icon(
-                                  Icons.lock_outline_rounded,
-                                  color: AppColors.textMuted,
+                                  Icons
+                                      .lock_outline_rounded,
+                                  color: AppColors
+                                      .textMuted,
                                   size: 19,
                                 ),
                         ),
-                        const SizedBox(width: AppSpacing.md),
+                        const SizedBox(
+                          width: AppSpacing.md,
+                        ),
                         Expanded(
                           child: Column(
                             crossAxisAlignment:
-                                CrossAxisAlignment.start,
+                                CrossAxisAlignment
+                                    .start,
                             children: [
                               Text(
                                 'Бүлэг ${chapter.number}',
-                                style: AppTypography.meta(),
+                                style:
+                                    AppTypography
+                                        .meta(),
                               ),
-                              const SizedBox(height: 2),
+                              const SizedBox(
+                                height: 2,
+                              ),
                               Text(
                                 chapter.title,
                                 maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: AppTypography.cardTitle(),
+                                overflow:
+                                    TextOverflow
+                                        .ellipsis,
+                                style:
+                                    AppTypography
+                                        .cardTitle(),
                               ),
                             ],
                           ),
                         ),
-                        const SizedBox(width: AppSpacing.sm),
-                        if (chapter.isFree)
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: AppSpacing.sm,
-                              vertical: 4,
-                            ),
-                            decoration: BoxDecoration(
-                              color: AppColors.success.withValues(
-                                alpha: 0.12,
-                              ),
-                              borderRadius:
-                                  BorderRadius.circular(10),
-                            ),
-                            child: Text(
-                              'Үнэгүй',
-                              style: GoogleFonts.poppins(
-                                color: AppColors.success,
-                                fontSize: 10,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                          )
-                        else
-                          const Icon(
-                            Icons.chevron_right_rounded,
-                            color: AppColors.textMuted,
+                        const SizedBox(
+                          width: AppSpacing.sm,
+                        ),
+                        Container(
+                          padding:
+                              const EdgeInsets
+                                  .symmetric(
+                            horizontal:
+                                AppSpacing.sm,
+                            vertical: 4,
                           ),
+                          decoration:
+                              BoxDecoration(
+                            color: accessColor
+                                .withValues(
+                              alpha: 0.12,
+                            ),
+                            borderRadius:
+                                BorderRadius
+                                    .circular(10),
+                          ),
+                          child: Text(
+                            _chapterAccessName(
+                              chapter,
+                            ),
+                            style:
+                                GoogleFonts.poppins(
+                              color: accessColor,
+                              fontSize: 10,
+                              fontWeight:
+                                  FontWeight.w600,
+                            ),
+                          ),
+                        ),
+                        if (!canAccess) ...[
+                          const SizedBox(
+                            width: AppSpacing.sm,
+                          ),
+                          const Icon(
+                            Icons.lock_rounded,
+                            color:
+                                AppColors.textMuted,
+                            size: 17,
+                          ),
+                        ],
                       ],
                     ),
                   ),
@@ -533,12 +851,16 @@ class _NovelDetailScreenState extends State<NovelDetailScreen> {
             color: AppColors.primaryLight,
             size: 40,
           ),
-          const SizedBox(height: AppSpacing.md),
+          const SizedBox(
+            height: AppSpacing.md,
+          ),
           Text(
             'Сэтгэгдэл',
             style: AppTypography.sectionTitle(),
           ),
-          const SizedBox(height: AppSpacing.sm),
+          const SizedBox(
+            height: AppSpacing.sm,
+          ),
           Text(
             'Сэтгэгдлийн системийг Firestore-той холбоход энэ хэсэгт '
             'уншигчдын сэтгэгдэл харагдана.',
@@ -574,9 +896,12 @@ class _StatItem extends StatelessWidget {
           color: iconColor,
           size: 20,
         ),
-        const SizedBox(width: AppSpacing.sm),
+        const SizedBox(
+          width: AppSpacing.sm,
+        ),
         Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment:
+              CrossAxisAlignment.start,
           children: [
             Text(
               value,
@@ -616,7 +941,9 @@ class _DetailTab extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(11),
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
+        duration: const Duration(
+          milliseconds: 180,
+        ),
         padding: const EdgeInsets.symmetric(
           vertical: AppSpacing.md,
           horizontal: AppSpacing.sm,
@@ -625,10 +952,12 @@ class _DetailTab extends StatelessWidget {
           color: selected
               ? AppColors.primary
               : Colors.transparent,
-          borderRadius: BorderRadius.circular(11),
+          borderRadius:
+              BorderRadius.circular(11),
         ),
         child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisAlignment:
+              MainAxisAlignment.center,
           children: [
             Icon(
               icon,
@@ -637,15 +966,19 @@ class _DetailTab extends StatelessWidget {
                   ? Colors.white
                   : AppColors.textSecondary,
             ),
-            const SizedBox(width: AppSpacing.sm),
+            const SizedBox(
+              width: AppSpacing.sm,
+            ),
             Flexible(
               child: Text(
                 label,
-                overflow: TextOverflow.ellipsis,
+                overflow:
+                    TextOverflow.ellipsis,
                 style: GoogleFonts.poppins(
                   color: selected
                       ? Colors.white
-                      : AppColors.textSecondary,
+                      : AppColors
+                          .textSecondary,
                   fontSize: 13,
                   fontWeight: selected
                       ? FontWeight.w600

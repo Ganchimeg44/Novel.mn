@@ -1,7 +1,7 @@
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' hide User;
 
 import 'firebase_options.dart';
 import 'theme/app_theme.dart';
@@ -17,9 +17,17 @@ Future<void> main() async {
       options: DefaultFirebaseOptions.currentPlatform,
     );
   } catch (error, stackTrace) {
-    // Хөгжүүлэлтийн үед Firebase холбогдоогүй/буруу тохиргоотой үед
-    // апп шууд краш хийхийн оронд алдааг консол дээр харуулна.
     debugPrint('Firebase initialization алдаа: $error');
+    debugPrint('$stackTrace');
+  }
+
+  try {
+    await Supabase.initialize(
+      url: 'https://gkcxsniomiqkespuasp.supabase.co',
+      publishableKey: 'sb_publishable_H_WvaBbm6HmHQMSrWJg6rA_FFgpazyd',
+    );
+  } catch (error, stackTrace) {
+    debugPrint('Supabase initialization алдаа: $error');
     debugPrint('$stackTrace');
   }
 
@@ -40,14 +48,6 @@ class NovelApp extends StatelessWidget {
   }
 }
 
-/// App нээгдэхэд Firebase-т нэвтэрсэн эсэхийг шалгаад,
-/// нэвтрээгүй бол `LoginScreen`, нэвтэрсэн бол `NovelListScreen`
-/// харуулдаг гарц (gate) widget.
-///
-/// `AuthService.authStateChanges()`-г сонсдог тул хэрэглэгч login/register
-/// амжилттай хийх үед Firebase auth төлөв өөрчлөгдөнгүүт энэ widget
-/// автоматаар дахин зурагдаж `NovelListScreen` рүү сэлгэнэ — screen-үүд
-/// дотор шинээр Navigator.push/pop бичих шаардлагагүй.
 class _AuthGate extends StatelessWidget {
   const _AuthGate();
 
@@ -63,15 +63,19 @@ class _AuthGate extends StatelessWidget {
           return const Scaffold(
             backgroundColor: AppColors.background,
             body: Center(
-              child: CircularProgressIndicator(color: AppColors.primary),
+              child: CircularProgressIndicator(
+                color: AppColors.primary,
+              ),
             ),
           );
         }
 
         final user = snapshot.data;
+
         if (user == null) {
           return const LoginScreen();
         }
+
         return const NovelListScreen();
       },
     );

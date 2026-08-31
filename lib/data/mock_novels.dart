@@ -2,8 +2,6 @@ import '../models/novel.dart';
 
 /// ЛОКАЛ ТУРШИЛТЫН ӨГӨГДӨЛ
 /// Firebase холбогдоогүй үед апп-аа туршихад ашиглана.
-/// Cover image-ийг одоохондоо placeholder путь/нэрээр илэрхийлсэн бөгөөд
-/// дараа нь жинхэнэ зураг (asset эсвэл network URL)-аар солино.
 final List<Novel> mockNovels = [
   Novel(
     id: 'novel_1',
@@ -23,7 +21,7 @@ final List<Novel> mockNovels = [
         content:
             'Салхи хүчтэй үлээж, хар үүлс тэнгэрийг бүрхэн авлаа. Алсын хаа '
             'нэгтээ аянга цахиж, газар чичирхийлнэ.',
-        isFree: true,
+        accessLevel: AccessLevel.free,
       ),
       Chapter(
         id: 'n1_c2',
@@ -32,7 +30,7 @@ final List<Novel> mockNovels = [
         content:
             'Тэр зогсож зайгүй алхсаар байсан. Өмнө нь хэзээ ч төсөөлж '
             'байгаагүй хүчийг өөрийн дотор мэдэрч байлаа.',
-        isFree: true,
+        accessLevel: AccessLevel.free,
       ),
       Chapter(
         id: 'n1_c3',
@@ -41,21 +39,21 @@ final List<Novel> mockNovels = [
         content:
             '"Хэрэв би хүчтэй болохгүй бол, бүхнийг алдана." Тэрээр алхаагаа '
             'түргэсгэв.',
-        isFree: true,
+        accessLevel: AccessLevel.free,
       ),
       Chapter(
         id: 'n1_c4',
         number: 4,
         title: 'Анхны даалгавар',
-        content: 'Энэ бүлэг түгжээтэй бөгөөд зөвхөн худалдан авсны дараа нээгдэнэ.',
-        isFree: false,
+        content: 'Энэ бүлэг VIP эрхтэй хэрэглэгчдэд нээлттэй.',
+        accessLevel: AccessLevel.vip,
       ),
       Chapter(
         id: 'n1_c5',
         number: 5,
         title: 'Туршилт',
-        content: 'Энэ бүлэг түгжээтэй бөгөөд зөвхөн худалдан авсны дараа нээгдэнэ.',
-        isFree: false,
+        content: 'Энэ бүлэг зөвхөн VVIP эрхтэй хэрэглэгчдэд нээлттэй.',
+        accessLevel: AccessLevel.vvip,
       ),
     ],
   ),
@@ -74,29 +72,31 @@ final List<Novel> mockNovels = [
         id: 'n2_c1',
         number: 1,
         title: 'Өв залгамжлал',
-        content: 'Овгийн сүүлчийн үр удам гэдгээ мэдсэн өдрөөс түүний амьдрал өөрчлөгдөв.',
-        isFree: true,
+        content:
+            'Овгийн сүүлчийн үр удам гэдгээ мэдсэн өдрөөс түүний амьдрал өөрчлөгдөв.',
+        accessLevel: AccessLevel.free,
       ),
       Chapter(
         id: 'n2_c2',
         number: 2,
         title: 'Хараалын ул мөр',
-        content: 'Хуучин судар дотроос тэрээр овгийнхоо хараалын тухай олж мэдэв.',
-        isFree: true,
+        content:
+            'Хуучин судар дотроос тэрээр овгийнхоо хараалын тухай олж мэдэв.',
+        accessLevel: AccessLevel.free,
       ),
       Chapter(
         id: 'n2_c3',
         number: 3,
         title: 'Аюултай зам',
-        content: 'Энэ бүлэг түгжээтэй бөгөөд зөвхөн худалдан авсны дараа нээгдэнэ.',
-        isFree: false,
+        content: 'Энэ бүлэг VIP эрхтэй хэрэглэгчдэд нээлттэй.',
+        accessLevel: AccessLevel.vip,
       ),
       Chapter(
         id: 'n2_c4',
         number: 4,
         title: 'Тулаан',
-        content: 'Энэ бүлэг түгжээтэй бөгөөд зөвхөн худалдан авсны дараа нээгдэнэ.',
-        isFree: false,
+        content: 'Энэ бүлэг VIP эрхтэй хэрэглэгчдэд нээлттэй.',
+        accessLevel: AccessLevel.vip,
       ),
     ],
   ),
@@ -115,22 +115,24 @@ final List<Novel> mockNovels = [
         id: 'n3_c1',
         number: 1,
         title: 'Сүйрлийн дараа',
-        content: 'Хот харанхуйд дүрэгдэж, амьд үлдэгсэд бие биенээ хайж эхлэв.',
-        isFree: true,
+        content:
+            'Хот харанхуйд дүрэгдэж, амьд үлдэгсэд бие биенээ хайж эхлэв.',
+        accessLevel: AccessLevel.free,
       ),
       Chapter(
         id: 'n3_c2',
         number: 2,
         title: 'Шинэ гэр бүл',
-        content: 'Тэдгээр өөр өөрийн замаар ирсэн хүмүүс аажмаар бие биедээ итгэж эхлэв.',
-        isFree: true,
+        content:
+            'Тэдгээр өөр өөрийн замаар ирсэн хүмүүс аажмаар бие биедээ итгэж эхлэв.',
+        accessLevel: AccessLevel.free,
       ),
       Chapter(
         id: 'n3_c3',
         number: 3,
         title: 'Хамгаалалт',
-        content: 'Энэ бүлэг түгжээтэй бөгөөд зөвхөн худалдан авсны дараа нээгдэнэ.',
-        isFree: false,
+        content: 'Энэ бүлэг VIP эрхтэй хэрэглэгчдэд нээлттэй.',
+        accessLevel: AccessLevel.vip,
       ),
     ],
   ),

@@ -1,18 +1,33 @@
+/// Контентын эрхийн төрөл
+enum AccessLevel {
+  free,
+  vip,
+  vvip,
+}
+
 /// Нэг бүлгийг илэрхийлэх модель
 class Chapter {
   final String id;
   final int number;
   final String title;
-  final String content; // Бүлгийн бүтэн текст (унших дэлгэцэд ашиглана)
-  final bool isFree; // true бол үнэгүй, false бол худалдан авах шаардлагатай
+  final String content;
+
+  /// free  -> бүх хэрэглэгч
+  /// vip   -> VIP эсвэл VVIP
+  /// vvip  -> зөвхөн VVIP
+  final AccessLevel accessLevel;
 
   const Chapter({
     required this.id,
     required this.number,
     required this.title,
     required this.content,
-    this.isFree = true,
+    this.accessLevel = AccessLevel.free,
   });
+
+  bool get isFree => accessLevel == AccessLevel.free;
+  bool get isVip => accessLevel == AccessLevel.vip;
+  bool get isVvip => accessLevel == AccessLevel.vvip;
 }
 
 /// Нэг зохиолыг илэрхийлэх модель
@@ -20,9 +35,9 @@ class Novel {
   final String id;
   final String title;
   final String author;
-  final String coverImage; // Одоогоор зурагны URL (локал болон сүлжээний аль алинд ажиллана)
+  final String coverImage;
   final String description;
-  final List<String> genre; // Жишээ нь: ['Адал явдал', 'Фэнтэзи', 'Эрх мэдэл']
+  final List<String> genre;
   final double rating;
   final List<Chapter> chapters;
 
