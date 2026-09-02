@@ -26,6 +26,7 @@ class RegistrationController {
     required String email,
     required String password,
     required DateTime birthDate,
+    required String avatarType,
     String? phoneNumber,
   }) async {
     if (await _users.isUsernameTaken(username)) {
@@ -44,6 +45,7 @@ class RegistrationController {
       email: email,
       phoneNumber: phoneNumber,
       birthDate: birthDate,
+      avatarType: avatarType,
     );
   }
 
@@ -78,6 +80,7 @@ class RegistrationController {
     required String password,
     required DateTime birthDate,
     required String phoneNumber,
+    required String avatarType,
   }) async {
     if (await _users.isUsernameTaken(username)) {
       throw StateError('Энэ хэрэглэгчийн нэр аль хэдийн ашиглагдсан байна.');
@@ -98,6 +101,7 @@ class RegistrationController {
       email: email,
       phoneNumber: phoneNumber,
       birthDate: birthDate,
+      avatarType: avatarType,
     );
   }
 
@@ -107,7 +111,12 @@ class RegistrationController {
     required String email,
     required String? phoneNumber,
     required DateTime birthDate,
+    required String avatarType,
   }) async {
+    if (avatarType != 'male' && avatarType != 'female') {
+      throw ArgumentError('Avatar сонголт буруу байна.');
+    }
+
     try {
       final sixDigitId = await _users.generateAndReserveSixDigitId(uid);
       await _users.reserveUsername(username: username, uid: uid, email: email);
@@ -121,14 +130,14 @@ class RegistrationController {
         displayName: username,
         birthDate: birthDate,
         createdAt: DateTime.now(),
+        avatarType: avatarType,
       );
 
       await _users.createUserProfile(user);
       return user;
     } catch (error) {
-      // Firestore талд алдаа гарвал Auth дээр үүссэн хагас бүртгэлийг
-      // цэвэрлэхийг оролдоно (шинэ хэрэглэгч "хагас" төлөвт үлдэхгүй байх).
-      await _auth.currentUser?.delete().catchError((_) {});
+      // Бүртгэлийн алдааны үед хэрэглэгчийн Firebase Auth бүртгэлийг
+      // автоматаар устгахгүй. UI-д алдааг буцааж, хэрэглэгч дахин оролдоно.
       rethrow;
     }
   }
