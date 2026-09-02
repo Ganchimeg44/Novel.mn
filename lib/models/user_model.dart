@@ -18,6 +18,10 @@ class UserModel {
   final DateTime createdAt;
   final String? profileImageUrl;
 
+  /// Хэрэглэгчийн сонгосон avatar: `male` эсвэл `female`.
+  /// Хуучин хэрэглэгч дээр null байж болох бөгөөд UI ерөнхий avatar харуулна.
+  final String? avatarType;
+
   // ---------------------------------------------------------------------
   // LEGACY эрхийн хоног
   // ---------------------------------------------------------------------
@@ -73,6 +77,7 @@ class UserModel {
     this.birthDate,
     required this.createdAt,
     this.profileImageUrl,
+    this.avatarType,
 
     // Legacy
     this.vipDays = 0,
@@ -252,6 +257,10 @@ class UserModel {
         DateTime.now();
   }
 
+  static String? _parseAvatarType(dynamic value) {
+    return value == 'male' || value == 'female' ? value as String : null;
+  }
+
   // ---------------------------------------------------------------------
   // Firestore -> UserModel
   // ---------------------------------------------------------------------
@@ -287,6 +296,7 @@ class UserModel {
       ),
       profileImageUrl:
           map['profileImageUrl'] as String?,
+      avatarType: _parseAvatarType(map['avatarType']),
 
       // Legacy
       vipDays:
@@ -373,6 +383,7 @@ class UserModel {
       'birthDate': birthDate,
       'createdAt': createdAt,
       'profileImageUrl': profileImageUrl,
+      'avatarType': avatarType,
 
       // Legacy
       'vipDays': vipDays,
@@ -413,6 +424,7 @@ class UserModel {
     DateTime? birthDate,
     DateTime? createdAt,
     String? profileImageUrl,
+    String? avatarType,
 
     int? vipDays,
     int? vvipDays,
@@ -454,6 +466,8 @@ class UserModel {
       profileImageUrl:
           profileImageUrl ??
               this.profileImageUrl,
+      avatarType:
+          avatarType ?? this.avatarType,
 
       vipDays:
           vipDays ?? this.vipDays,
