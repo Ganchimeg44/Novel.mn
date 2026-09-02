@@ -18,6 +18,7 @@ class OtpVerificationScreen extends StatefulWidget {
   final String? pendingEmail;
   final String? pendingPassword;
   final DateTime? pendingBirthDate;
+  final String? pendingAvatarType;
 
   const OtpVerificationScreen({
     super.key,
@@ -28,6 +29,7 @@ class OtpVerificationScreen extends StatefulWidget {
     this.pendingEmail,
     this.pendingPassword,
     this.pendingBirthDate,
+    this.pendingAvatarType,
   });
 
   @override
@@ -68,6 +70,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
           password: widget.pendingPassword!,
           birthDate: widget.pendingBirthDate!,
           phoneNumber: widget.phoneNumber,
+          avatarType: widget.pendingAvatarType!,
         );
       } else {
         await _registrationController.completePhoneLogin(
