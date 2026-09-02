@@ -59,6 +59,38 @@ bool _sendingBirthdayGiftRequest = false;
     );
   }
 
+  Future<void> _changeAvatar(UserModel user) async {
+    final selected = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: AppColors.surface,
+      builder: (context) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.xl),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('Профайл зураг сонгох', style: AppTypography.sectionTitle()),
+              const SizedBox(height: AppSpacing.lg),
+              Row(
+                children: [
+                  Expanded(child: _ProfileAvatarChoice(label: 'Эрэгтэй', icon: Icons.man_rounded, selected: user.avatarType == 'male', onTap: () => Navigator.pop(context, 'male'))),
+                  const SizedBox(width: AppSpacing.md),
+                  Expanded(child: _ProfileAvatarChoice(label: 'Эмэгтэй', icon: Icons.woman_rounded, selected: user.avatarType == 'female', onTap: () => Navigator.pop(context, 'female'))),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (selected == null || selected == user.avatarType) return;
+    await _userRepository.updateMutableProfileFields(user.uid, {'avatarType': selected});
+    if (!mounted) return;
+    setState(() => _userFuture = _loadUser());
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Профайл зураг шинэчлэгдлээ.')));
+  }
+
   Future<void> _logout() async {
     await _authService.signOut();
 
@@ -446,7 +478,9 @@ void _showBirthdayMessage(String message) {
       radius: AppRadius.premium,
       child: Column(
         children: [
-          Container(
+          GestureDetector(
+            onTap: () => _changeAvatar(user),
+            child: Container(
             width: 76,
             height: 76,
             decoration: BoxDecoration(
@@ -458,15 +492,16 @@ void _showBirthdayMessage(String message) {
               ),
             ),
             alignment: Alignment.center,
-            child: Text(
-              user.username.isNotEmpty
-                  ? user.username[0].toUpperCase()
-                  : '?',
-              style: AppTypography.novelTitle(
-                color: AppColors.gold,
-                fontSize: 28,
-              ),
+            child: Icon(
+              user.avatarType == 'male'
+                  ? Icons.man_rounded
+                  : user.avatarType == 'female'
+                      ? Icons.woman_rounded
+                      : Icons.person_rounded,
+              color: AppColors.gold,
+              size: 48,
             ),
+          ),
           ),
 
           const SizedBox(
@@ -938,6 +973,38 @@ class _SettingsDivider extends StatelessWidget {
     return const Divider(
       height: 1,
       color: AppColors.border,
+    );
+  }
+}
+
+class _ProfileAvatarChoice extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _ProfileAvatarChoice({required this.label, required this.icon, required this.selected, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
+        decoration: BoxDecoration(
+          color: selected ? AppColors.primary.withValues(alpha: 0.18) : AppColors.background,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: selected ? AppColors.primaryLight : AppColors.border, width: selected ? 2 : 1),
+        ),
+        child: Column(
+          children: [
+            Icon(icon, size: 52, color: selected ? AppColors.primaryLight : AppColors.textSecondary),
+            const SizedBox(height: AppSpacing.sm),
+            Text(label, style: AppTypography.body(color: AppColors.textPrimary)),
+          ],
+        ),
+      ),
     );
   }
 }
