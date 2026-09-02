@@ -21,6 +21,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   bool _isSubmitting = false;
   String? _errorMessage;
   DateTime? _birthDate;
+  String? _avatarType;
 
   final _usernameCtrl = TextEditingController();
   final _emailCtrl = TextEditingController();
@@ -55,6 +56,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
       setState(() => _errorMessage = 'Төрсөн өдрөө сонгоно уу.');
       return;
     }
+    if (_avatarType == null) {
+      setState(() => _errorMessage = 'Профайл зургаа сонгоно уу.');
+      return;
+    }
 
     setState(() {
       _isSubmitting = true;
@@ -68,6 +73,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
           email: _emailCtrl.text.trim(),
           password: _passwordCtrl.text,
           birthDate: _birthDate!,
+          avatarType: _avatarType!,
           phoneNumber: _phoneCtrl.text.trim().isEmpty
               ? null
               : _phoneCtrl.text.trim(),
@@ -90,6 +96,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   pendingEmail: _emailCtrl.text.trim(),
                   pendingPassword: _passwordCtrl.text,
                   pendingBirthDate: _birthDate,
+                  pendingAvatarType: _avatarType,
                 ),
               ),
             );
@@ -185,6 +192,19 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     style: const TextStyle(color: AppColors.textPrimary),
                   ),
                 ),
+              ),
+              const SizedBox(height: 20),
+              Text(
+                'Профайл зураг',
+                style: GoogleFonts.poppins(
+                  color: AppColors.textPrimary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 12),
+              _AvatarSelector(
+                selected: _avatarType,
+                onChanged: (value) => setState(() => _avatarType = value),
               ),
               if (_errorMessage != null) ...[
                 const SizedBox(height: 14),
@@ -298,6 +318,79 @@ class _AuthTextField extends StatelessWidget {
       validator: validator,
       style: const TextStyle(color: AppColors.textPrimary),
       decoration: InputDecoration(labelText: label),
+    );
+  }
+}
+
+class _AvatarSelector extends StatelessWidget {
+  final String? selected;
+  final ValueChanged<String> onChanged;
+
+  const _AvatarSelector({required this.selected, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: _AvatarChoice(
+            label: 'Эрэгтэй',
+            icon: Icons.man_rounded,
+            isSelected: selected == 'male',
+            onTap: () => onChanged('male'),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: _AvatarChoice(
+            label: 'Эмэгтэй',
+            icon: Icons.woman_rounded,
+            isSelected: selected == 'female',
+            onTap: () => onChanged('female'),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _AvatarChoice extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final bool isSelected;
+  final VoidCallback onTap;
+
+  const _AvatarChoice({
+    required this.label,
+    required this.icon,
+    required this.isSelected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.symmetric(vertical: 16),
+        decoration: BoxDecoration(
+          color: isSelected ? AppColors.primary.withValues(alpha: 0.18) : AppColors.surface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(
+            color: isSelected ? AppColors.primaryLight : AppColors.border,
+            width: isSelected ? 2 : 1,
+          ),
+        ),
+        child: Column(
+          children: [
+            Icon(icon, size: 48, color: isSelected ? AppColors.primaryLight : AppColors.textSecondary),
+            const SizedBox(height: 8),
+            Text(label, style: GoogleFonts.poppins(color: AppColors.textPrimary, fontWeight: FontWeight.w600)),
+          ],
+        ),
+      ),
     );
   }
 }
