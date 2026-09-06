@@ -1,43 +1,11 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../models/novel.dart';
 import '../models/user_model.dart';
 import '../theme/app_theme.dart';
-
-class ChapterWordBookmarkStore {
-  ChapterWordBookmarkStore._internal();
-
-  static final ChapterWordBookmarkStore instance =
-      ChapterWordBookmarkStore._internal();
-
-  final Map<String, Set<int>> _bookmarksByChapter = {};
-
-  String _keyFor(String novelId, String chapterId) =>
-      '${novelId}_$chapterId';
-
-  Set<int> getBookmarks(String novelId, String chapterId) {
-    return Set<int>.from(
-      _bookmarksByChapter[_keyFor(novelId, chapterId)] ?? <int>{},
-    );
-  }
-
-  void toggleBookmark(
-    String novelId,
-    String chapterId,
-    int wordIndex,
-  ) {
-    final key = _keyFor(novelId, chapterId);
-    final current =
-        _bookmarksByChapter.putIfAbsent(key, () => <int>{});
-
-    if (current.contains(wordIndex)) {
-      current.remove(wordIndex);
-    } else {
-      current.add(wordIndex);
-    }
-  }
-}
 
 class ChapterReaderScreen extends StatefulWidget {
   final Novel novel;
@@ -56,20 +24,26 @@ class ChapterReaderScreen extends StatefulWidget {
       _ChapterReaderScreenState();
 }
 
-class _ChapterReaderScreenState
-    extends State<ChapterReaderScreen> {
+class _ChapterReaderScreenState extends State<ChapterReaderScreen> {
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+
   late int _currentIndex;
-  late List<String> _words;
 
-  Set<int> _bookmarkedWordIndices = <int>{};
-
-  final ChapterWordBookmarkStore _bookmarkStore =
-      ChapterWordBookmarkStore.instance;
+  String _chapterContent = '';
 
   double _fontSize = 18;
 
-  Chapter get _chapter =>
-      widget.novel.chapters[_currentIndex];
+  bool _accessLoading = true;
+  bool _chapterLoading = false;
+
+  bool _isAdmin = false;
+  bool _hasVip = false;
+  bool _hasVvip = false;
+
+  String? _chapterError;
+
+  Chapter get _chapter => widget.novel.chapters[_currentIndex];
 
   bool get _isFirstChapter => _currentIndex == 0;
 
@@ -77,29 +51,40 @@ class _ChapterReaderScreenState
       _currentIndex == widget.novel.chapters.length - 1;
 
   double get _chapterProgress {
-    if (widget.novel.chapters.isEmpty) return 0;
-
-    return (_currentIndex + 1) /
-        widget.novel.chapters.length;
-  }
-
-  Color get _bookmarkColor {
-    final hex = widget.user?.bookmarkColor;
-
-    if (hex == null || hex.isEmpty) {
-      return AppColors.primary;
+    if (widget.novel.chapters.isEmpty) {
+      return 0;
     }
 
-    try {
-      final cleaned = hex.replaceAll('#', '');
-      final fullHex =
-          cleaned.length == 6 ? 'FF$cleaned' : cleaned;
+    return (_currentIndex + 1) / widget.novel.chapters.length;
+  }
 
-      return Color(
-        int.parse(fullHex, radix: 16),
-      );
-    } catch (_) {
-      return AppColors.primary;
+  bool get _canReadCurrentChapter {
+    if (_isAdmin) {
+      return true;
+    }
+
+    switch (_chapter.accessLevel) {
+      case AccessLevel.free:
+        return true;
+
+      case AccessLevel.vip:
+        return _hasVip || _hasVvip;
+
+      case AccessLevel.vvip:
+        return _hasVvip;
+    }
+  }
+
+  String get _requiredAccessLabel {
+    switch (_chapter.accessLevel) {
+      case AccessLevel.free:
+        return 'FREE';
+
+      case AccessLevel.vip:
+        return 'VIP';
+
+      case AccessLevel.vvip:
+        return 'VVIP';
     }
   }
 
@@ -107,50 +92,295 @@ class _ChapterReaderScreenState
   void initState() {
     super.initState();
 
-    _currentIndex = widget.chapterIndex;
-    _loadChapter();
+    if (widget.novel.chapters.isEmpty) {
+      _currentIndex = 0;
+      _accessLoading = false;
+      _chapterError = 'Энэ зохиолд бүлэг байхгүй байна.';
+      return;
+    }
+
+    if (widget.chapterIndex < 0) {
+      _currentIndex = 0;
+    } else if (widget.chapterIndex >= widget.novel.chapters.length) {
+      _currentIndex = widget.novel.chapters.length - 1;
+    } else {
+      _currentIndex = widget.chapterIndex;
+    }
+
+    _loadInitialData();
   }
 
-  void _loadChapter() {
-    _words = _chapter.content
-        .split(RegExp(r'\s+'))
-      ..removeWhere(
-        (word) => word.isEmpty,
+  Future<void> _loadInitialData() async {
+    await _loadAccess();
+
+    if (!mounted) {
+      return;
+    }
+
+    await _loadCurrentChapter();
+  }
+
+  int _readInt(dynamic value) {
+    if (value is int) {
+      return value;
+    }
+
+    if (value is num) {
+      return value.toInt();
+    }
+
+    return int.tryParse(value?.toString() ?? '') ?? 0;
+  }
+
+  bool _hasActiveExpiration(dynamic value) {
+    if (value is! Timestamp) {
+      return false;
+    }
+
+    return value.toDate().isAfter(DateTime.now());
+  }
+
+  Future<void> _loadAccess() async {
+    final firebaseUser = _auth.currentUser;
+
+    if (firebaseUser == null) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _accessLoading = false;
+        _isAdmin = false;
+        _hasVip = false;
+        _hasVvip = false;
+      });
+
+      return;
+    }
+
+    try {
+      final snapshot = await _firestore
+          .collection('users')
+          .doc(firebaseUser.uid)
+          .get();
+
+      final data = snapshot.data() ?? <String, dynamic>{};
+
+      final isAdmin = data['isAdmin'] == true;
+
+      final legacyVipDays = _readInt(data['vipDays']);
+      final legacyVvipDays = _readInt(data['vvipDays']);
+
+      final hasVvip =
+          isAdmin ||
+          _hasActiveExpiration(data['vvipExpiresAt']) ||
+          (data['vvipExpiresAt'] == null && legacyVvipDays > 0);
+
+      final hasVip =
+          isAdmin ||
+          hasVvip ||
+          _hasActiveExpiration(data['vipExpiresAt']) ||
+          (data['vipExpiresAt'] == null && legacyVipDays > 0);
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _isAdmin = isAdmin;
+        _hasVip = hasVip;
+        _hasVvip = hasVvip;
+        _accessLoading = false;
+      });
+    } catch (error) {
+      debugPrint('READER ACCESS ERROR: $error');
+
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _isAdmin = false;
+        _hasVip = false;
+        _hasVvip = false;
+        _accessLoading = false;
+      });
+    }
+  }
+
+  Future<void> _loadCurrentChapter() async {
+    if (widget.novel.chapters.isEmpty) {
+      return;
+    }
+
+    final chapter = _chapter;
+
+    if (!_canReadCurrentChapter) {
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _chapterLoading = false;
+        _chapterError = null;
+        _chapterContent = '';
+      });
+
+      return;
+    }
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _chapterLoading = true;
+      _chapterError = null;
+      _chapterContent = '';
+    });
+
+    try {
+      final snapshot = await _firestore
+          .collection('novels')
+          .doc(widget.novel.id)
+          .collection('chapters')
+          .doc(chapter.id)
+          .get();
+
+      if (!snapshot.exists) {
+        if (!mounted) {
+          return;
+        }
+
+        setState(() {
+          _chapterLoading = false;
+          _chapterError = 'Бүлгийн мэдээлэл олдсонгүй.';
+          _chapterContent = '';
+        });
+
+        return;
+      }
+
+      final data = snapshot.data() ?? <String, dynamic>{};
+
+      final content = data['content']?.toString() ?? '';
+
+      if (!mounted) {
+        return;
+      }
+
+      if (_chapter.id != chapter.id) {
+        return;
+      }
+
+      setState(() {
+        _chapterContent = content;
+        _chapterLoading = false;
+
+        if (content.trim().isEmpty) {
+          _chapterError = 'Энэ бүлгийн текст хоосон байна.';
+        }
+      });
+
+      if (content.trim().isNotEmpty) {
+        await _saveReadingProgress(chapter);
+      }
+    } on FirebaseException catch (error) {
+      debugPrint(
+        'READER FIRESTORE ERROR: '
+        '${error.code} ${error.message}',
       );
 
-    _bookmarkedWordIndices =
-        _bookmarkStore.getBookmarks(
-      widget.novel.id,
-      _chapter.id,
-    );
+      if (!mounted) {
+        return;
+      }
+
+      if (_chapter.id != chapter.id) {
+        return;
+      }
+
+      setState(() {
+        _chapterLoading = false;
+        _chapterContent = '';
+
+        if (error.code == 'permission-denied') {
+          _chapterError =
+              'Энэ бүлгийг унших эрх хүрэлцэхгүй байна.';
+        } else {
+          _chapterError =
+              'Бүлгийг ачаалж чадсангүй. Дахин оролдоно уу.';
+        }
+      });
+    } catch (error) {
+      debugPrint('READER CHAPTER ERROR: $error');
+
+      if (!mounted) {
+        return;
+      }
+
+      if (_chapter.id != chapter.id) {
+        return;
+      }
+
+      setState(() {
+        _chapterLoading = false;
+        _chapterContent = '';
+        _chapterError =
+            'Бүлгийг ачаалж чадсангүй. Дахин оролдоно уу.';
+      });
+    }
   }
 
-  void _goToChapter(int newIndex) {
+  Future<void> _saveReadingProgress(Chapter chapter) async {
+    final firebaseUser = _auth.currentUser;
+
+    if (firebaseUser == null) {
+      return;
+    }
+
+    if (!_canReadCurrentChapter) {
+      return;
+    }
+
+    try {
+      await _firestore
+          .collection('users')
+          .doc(firebaseUser.uid)
+          .collection('readingProgress')
+          .doc(widget.novel.id)
+          .set(
+        <String, dynamic>{
+          'novelId': widget.novel.id,
+          'chapterId': chapter.id,
+          'chapterNumber': chapter.number,
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+        SetOptions(merge: true),
+      );
+    } on FirebaseException catch (error) {
+      debugPrint(
+        'READING PROGRESS FIRESTORE ERROR: '
+        '${error.code} ${error.message}',
+      );
+    } catch (error) {
+      debugPrint('READING PROGRESS ERROR: $error');
+    }
+  }
+
+  Future<void> _goToChapter(int newIndex) async {
     if (newIndex < 0 ||
-        newIndex >= widget.novel.chapters.length) {
+        newIndex >= widget.novel.chapters.length ||
+        newIndex == _currentIndex) {
       return;
     }
 
     setState(() {
       _currentIndex = newIndex;
-      _loadChapter();
+      _chapterContent = '';
+      _chapterError = null;
     });
-  }
 
-  void _onWordDoubleTap(int wordIndex) {
-    setState(() {
-      _bookmarkStore.toggleBookmark(
-        widget.novel.id,
-        _chapter.id,
-        wordIndex,
-      );
-
-      _bookmarkedWordIndices =
-          _bookmarkStore.getBookmarks(
-        widget.novel.id,
-        _chapter.id,
-      );
-    });
+    await _loadCurrentChapter();
   }
 
   void _showFontSettings() {
@@ -198,8 +428,7 @@ class _ChapterReaderScreenState
                             divisions: 7,
                             activeColor: AppColors.primary,
                             inactiveColor:
-                                AppColors.readerMuted
-                                    .withValues(
+                                AppColors.readerMuted.withValues(
                               alpha: 0.25,
                             ),
                             onChanged: (value) {
@@ -241,6 +470,26 @@ class _ChapterReaderScreenState
 
   @override
   Widget build(BuildContext context) {
+    if (widget.novel.chapters.isEmpty) {
+      return Scaffold(
+        backgroundColor: AppColors.readerBackground,
+        appBar: AppBar(
+          backgroundColor: AppColors.readerBackground,
+          foregroundColor: AppColors.readerText,
+          elevation: 0,
+        ),
+        body: Center(
+          child: Text(
+            'Энэ зохиолд бүлэг байхгүй байна.',
+            style: GoogleFonts.poppins(
+              color: AppColors.readerMuted,
+              fontSize: 14,
+            ),
+          ),
+        ),
+      );
+    }
+
     return Scaffold(
       backgroundColor: AppColors.readerBackground,
       appBar: AppBar(
@@ -308,26 +557,11 @@ class _ChapterReaderScreenState
                       maxWidth: AppLayout.readerMaxWidth,
                     ),
                     child: Column(
-                      crossAxisAlignment:
-                          CrossAxisAlignment.start,
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         _buildChapterHeader(),
                         const SizedBox(height: 30),
-                        if (!_chapter.isFree)
-                          _LockedChapterNotice(
-                            title: _chapter.title,
-                          )
-                        else
-                          _BookmarkableParagraph(
-                            words: _words,
-                            bookmarkedIndices:
-                                _bookmarkedWordIndices,
-                            bookmarkColor:
-                                _bookmarkColor,
-                            fontSize: _fontSize,
-                            onWordDoubleTap:
-                                _onWordDoubleTap,
-                          ),
+                        _buildChapterBody(),
                         const SizedBox(height: 40),
                         _buildEndDivider(),
                       ],
@@ -339,13 +573,14 @@ class _ChapterReaderScreenState
             _ReaderNavBar(
               isFirstChapter: _isFirstChapter,
               isLastChapter: _isLastChapter,
-              onPrevious: () =>
-                  _goToChapter(_currentIndex - 1),
-              onNext: () =>
-                  _goToChapter(_currentIndex + 1),
+              onPrevious: () {
+                _goToChapter(_currentIndex - 1);
+              },
+              onNext: () {
+                _goToChapter(_currentIndex + 1);
+              },
               chapterNumber: _chapter.number,
-              totalChapters:
-                  widget.novel.chapters.length,
+              totalChapters: widget.novel.chapters.length,
             ),
           ],
         ),
@@ -353,22 +588,67 @@ class _ChapterReaderScreenState
     );
   }
 
-  Widget _buildProgressBar() {
-    return Column(
-      children: [
-        LinearProgressIndicator(
-          value: _chapterProgress,
-          minHeight: 3,
-          backgroundColor:
-              AppColors.readerMuted.withValues(
-            alpha: 0.15,
+  Widget _buildChapterBody() {
+    if (_accessLoading) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.symmetric(
+            vertical: 40,
           ),
-          valueColor:
-              const AlwaysStoppedAnimation<Color>(
-            AppColors.primary,
+          child: CircularProgressIndicator(
+            color: AppColors.primary,
           ),
         ),
-      ],
+      );
+    }
+
+    if (!_canReadCurrentChapter) {
+      return _LockedChapterNotice(
+        requiredAccess: _requiredAccessLabel,
+      );
+    }
+
+    if (_chapterLoading) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.symmetric(
+            vertical: 40,
+          ),
+          child: CircularProgressIndicator(
+            color: AppColors.primary,
+          ),
+        ),
+      );
+    }
+
+    if (_chapterError != null) {
+      return _ChapterLoadError(
+        message: _chapterError!,
+        onRetry: _loadCurrentChapter,
+      );
+    }
+
+    return Text(
+      _chapterContent,
+      style: GoogleFonts.lora(
+        color: AppColors.readerText,
+        fontSize: _fontSize,
+        height: 1.9,
+        fontWeight: FontWeight.w400,
+      ),
+    );
+  }
+
+  Widget _buildProgressBar() {
+    return LinearProgressIndicator(
+      value: _chapterProgress,
+      minHeight: 3,
+      backgroundColor: AppColors.readerMuted.withValues(
+        alpha: 0.15,
+      ),
+      valueColor: const AlwaysStoppedAnimation<Color>(
+        AppColors.primary,
+      ),
     );
   }
 
@@ -401,8 +681,7 @@ class _ChapterReaderScreenState
           height: 2,
           decoration: BoxDecoration(
             color: AppColors.gold,
-            borderRadius:
-                BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(10),
           ),
         ),
       ],
@@ -416,16 +695,13 @@ class _ChapterReaderScreenState
           Container(
             width: 50,
             height: 1,
-            color:
-                AppColors.readerMuted.withValues(
+            color: AppColors.readerMuted.withValues(
               alpha: 0.35,
             ),
           ),
           const SizedBox(height: 12),
           Text(
-            _isLastChapter
-                ? 'Төгсөв'
-                : 'Бүлгийн төгсгөл',
+            _isLastChapter ? 'Төгсөв' : 'Бүлгийн төгсгөл',
             style: GoogleFonts.playfairDisplay(
               color: AppColors.readerMuted,
               fontSize: 13,
@@ -438,98 +714,69 @@ class _ChapterReaderScreenState
   }
 }
 
-class _BookmarkableParagraph
-    extends StatelessWidget {
-  final List<String> words;
-  final Set<int> bookmarkedIndices;
-  final Color bookmarkColor;
-  final double fontSize;
-  final ValueChanged<int> onWordDoubleTap;
+class _ChapterLoadError extends StatelessWidget {
+  final String message;
+  final Future<void> Function() onRetry;
 
-  const _BookmarkableParagraph({
-    required this.words,
-    required this.bookmarkedIndices,
-    required this.bookmarkColor,
-    required this.fontSize,
-    required this.onWordDoubleTap,
+  const _ChapterLoadError({
+    required this.message,
+    required this.onRetry,
   });
 
   @override
   Widget build(BuildContext context) {
-    final baseStyle = GoogleFonts.lora(
-      color: AppColors.readerText,
-      fontSize: fontSize,
-      height: 1.9,
-      fontWeight: FontWeight.w400,
-    );
-
-    return Wrap(
-      children: List.generate(
-        words.length,
-        (index) {
-          final word = words[index];
-          final isBookmarked =
-              bookmarkedIndices.contains(index);
-
-          return Padding(
-            padding: const EdgeInsets.only(
-              right: 5,
-              bottom: 3,
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(28),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(
+          alpha: 0.25,
+        ),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: AppColors.readerMuted.withValues(
+            alpha: 0.20,
+          ),
+        ),
+      ),
+      child: Column(
+        children: [
+          const Icon(
+            Icons.error_outline_rounded,
+            color: AppColors.readerMuted,
+            size: 36,
+          ),
+          const SizedBox(height: 14),
+          Text(
+            message,
+            textAlign: TextAlign.center,
+            style: GoogleFonts.poppins(
+              color: AppColors.readerMuted,
+              fontSize: 13,
+              height: 1.5,
             ),
-            child: GestureDetector(
-              onDoubleTap: () =>
-                  onWordDoubleTap(index),
-              child: AnimatedContainer(
-                duration:
-                    const Duration(milliseconds: 150),
-                padding: isBookmarked
-                    ? const EdgeInsets.symmetric(
-                        horizontal: 4,
-                        vertical: 1,
-                      )
-                    : EdgeInsets.zero,
-                decoration: isBookmarked
-                    ? BoxDecoration(
-                        color:
-                            bookmarkColor.withValues(
-                          alpha: 0.15,
-                        ),
-                        borderRadius:
-                            BorderRadius.circular(4),
-                        border: Border(
-                          bottom: BorderSide(
-                            color: bookmarkColor,
-                            width: 2,
-                          ),
-                        ),
-                      )
-                    : null,
-                child: Text(
-                  word,
-                  style: isBookmarked
-                      ? baseStyle.copyWith(
-                          color:
-                              AppColors.readerText,
-                          fontWeight:
-                              FontWeight.w600,
-                        )
-                      : baseStyle,
-                ),
-              ),
+          ),
+          const SizedBox(height: 16),
+          TextButton.icon(
+            onPressed: () {
+              onRetry();
+            },
+            icon: const Icon(
+              Icons.refresh_rounded,
             ),
-          );
-        },
+            label: const Text('Дахин оролдох'),
+          ),
+        ],
       ),
     );
   }
 }
 
-class _LockedChapterNotice
-    extends StatelessWidget {
-  final String title;
+class _LockedChapterNotice extends StatelessWidget {
+  final String requiredAccess;
 
   const _LockedChapterNotice({
-    required this.title,
+    required this.requiredAccess,
   });
 
   @override
@@ -541,11 +788,9 @@ class _LockedChapterNotice
         color: Colors.white.withValues(
           alpha: 0.32,
         ),
-        borderRadius:
-            BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(18),
         border: Border.all(
-          color:
-              AppColors.readerMuted.withValues(
+          color: AppColors.readerMuted.withValues(
             alpha: 0.20,
           ),
         ),
@@ -569,7 +814,7 @@ class _LockedChapterNotice
           ),
           const SizedBox(height: 8),
           Text(
-            'Уншихын тулд шаардлагатай эрхийг идэвхжүүлнэ.',
+            '$requiredAccess эрх шаардлагатай.',
             textAlign: TextAlign.center,
             style: GoogleFonts.poppins(
               color: AppColors.readerMuted,
@@ -613,8 +858,7 @@ class _ReaderNavBar extends StatelessWidget {
         color: const Color(0xFFEDE0CA),
         border: Border(
           top: BorderSide(
-            color:
-                AppColors.readerMuted.withValues(
+            color: AppColors.readerMuted.withValues(
               alpha: 0.18,
             ),
           ),
@@ -626,16 +870,14 @@ class _ReaderNavBar extends StatelessWidget {
           children: [
             Expanded(
               child: _NavButton(
-                icon:
-                    Icons.chevron_left_rounded,
+                icon: Icons.chevron_left_rounded,
                 label: 'Өмнөх',
                 enabled: !isFirstChapter,
                 onTap: onPrevious,
               ),
             ),
             Padding(
-              padding:
-                  const EdgeInsets.symmetric(
+              padding: const EdgeInsets.symmetric(
                 horizontal: 14,
               ),
               child: Text(
@@ -649,8 +891,7 @@ class _ReaderNavBar extends StatelessWidget {
             ),
             Expanded(
               child: _NavButton(
-                icon:
-                    Icons.chevron_right_rounded,
+                icon: Icons.chevron_right_rounded,
                 label: 'Дараах',
                 enabled: !isLastChapter,
                 onTap: onNext,
@@ -693,19 +934,16 @@ class _NavButton extends StatelessWidget {
               alpha: 0.25,
             )
           : Colors.transparent,
-      borderRadius:
-          BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(12),
       child: InkWell(
         onTap: enabled ? onTap : null,
-        borderRadius:
-            BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(12),
         child: Padding(
           padding: const EdgeInsets.symmetric(
             vertical: 11,
           ),
           child: Row(
-            mainAxisAlignment:
-                MainAxisAlignment.center,
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
               if (!iconTrailing) ...[
                 Icon(

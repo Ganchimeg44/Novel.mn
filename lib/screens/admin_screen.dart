@@ -5,6 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '../theme/app_theme.dart';
 import '../widgets/premium_widgets.dart';
+import 'novel_management_screen.dart';
 
 class AdminScreen extends StatefulWidget {
   const AdminScreen({super.key});
@@ -34,7 +35,7 @@ class _AdminScreenState extends State<AdminScreen>
   void initState() {
     super.initState();
     _adminTabController = TabController(
-      length: 4,
+      length: 5,
       vsync: this,
     );
     _adminTabController.addListener(() {
@@ -1065,6 +1066,102 @@ class _AdminScreenState extends State<AdminScreen>
     });
   }
 
+  Future<void> _setSelectedUserTranslatorRole(
+    bool isTranslator,
+  ) async {
+    final uid = _selectedUserUid;
+    final userData = _selectedUserData;
+
+    if (uid == null || userData == null) {
+      _showMessage('Эхлээд хэрэглэгчээ хайна уу.');
+      return;
+    }
+
+    if (_processingRequestKey != null) return;
+
+    final currentValue = userData['isTranslator'] == true;
+
+    if (currentValue == isTranslator) {
+      _showMessage(
+        isTranslator
+            ? 'Энэ хэрэглэгч аль хэдийн орчуулагч эрхтэй байна.'
+            : 'Энэ хэрэглэгч орчуулагч эрхгүй байна.',
+      );
+      return;
+    }
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: Text(
+            isTranslator
+                ? 'Орчуулагч эрх өгөх'
+                : 'Орчуулагч эрх цуцлах',
+          ),
+          content: Text(
+            isTranslator
+                ? '${(userData['username'] ?? '-')} хэрэглэгчид орчуулагч эрх өгөх үү?'
+                : '${(userData['username'] ?? '-')} хэрэглэгчийн орчуулагч эрхийг цуцлах уу?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(dialogContext).pop(false);
+              },
+              child: const Text('Болих'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(dialogContext).pop(true);
+              },
+              child: Text(
+                isTranslator ? 'Эрх өгөх' : 'Эрх цуцлах',
+              ),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true) return;
+
+    setState(() {
+      _processingRequestKey = 'translator:$uid';
+    });
+
+    try {
+      await _firestore
+          .collection('users')
+          .doc(uid)
+          .update({
+        'isTranslator': isTranslator,
+      });
+
+      await _refreshSelectedUser();
+
+      if (!mounted) return;
+
+      _showMessage(
+        isTranslator
+            ? 'Орчуулагч эрх амжилттай өглөө.'
+            : 'Орчуулагч эрх амжилттай цуцлагдлаа.',
+      );
+    } catch (error) {
+      if (!mounted) return;
+
+      _showMessage(
+        'Орчуулагч эрх өөрчлөх үед алдаа гарлаа: $error',
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _processingRequestKey = null;
+        });
+      }
+    }
+  }
+
   int _remainingDaysForUser(
     Map<String, dynamic> data,
     String type,
@@ -1417,6 +1514,12 @@ class _AdminScreenState extends State<AdminScreen>
                       ),
                       text: 'Хэрэглэгч',
                     ),
+                    Tab(
+                      icon: Icon(
+                        Icons.menu_book_rounded,
+                      ),
+                      text: 'Зохиол',
+                    ),
                   ],
                 ),
               ),
@@ -1428,6 +1531,7 @@ class _AdminScreenState extends State<AdminScreen>
                     _buildXpRequests(),
                     _buildBirthdayRequests(),
                     _buildUserManagement(),
+                    const NovelManagementScreen(),
                   ],
                 ),
               ),
@@ -1873,6 +1977,70 @@ class _AdminScreenState extends State<AdminScreen>
                       label: 'VVIP үлдэгдэл',
                       value:
                           '${_remainingDaysForUser(data, 'vvip')} хоног',
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    _AdminInfoRow(
+                      label: 'Орчуулагч',
+                      value: data['isTranslator'] == true
+                          ? 'Тийм'
+                          : 'Үгүй',
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: AppSpacing.lg),
+              PremiumCard(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Орчуулагчийн эрх',
+                      style: AppTypography.cardTitle(
+                        color: AppColors.primaryLight,
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    Text(
+                      data['isTranslator'] == true
+                          ? 'Энэ хэрэглэгч орчуулагч эрхтэй.'
+                          : 'Энэ хэрэглэгч орчуулагч эрхгүй.',
+                      style: AppTypography.body(),
+                    ),
+                    const SizedBox(height: AppSpacing.md),
+                    SizedBox(
+                      width: double.infinity,
+                      child: data['isTranslator'] == true
+                          ? OutlinedButton.icon(
+                              onPressed:
+                                  _processingRequestKey != null
+                                      ? null
+                                      : () =>
+                                          _setSelectedUserTranslatorRole(
+                                            false,
+                                          ),
+                              icon: const Icon(
+                                Icons.person_remove_alt_1_rounded,
+                              ),
+                              label: const Text(
+                                'Орчуулагч эрх цуцлах',
+                              ),
+                            )
+                          : ElevatedButton.icon(
+                              onPressed:
+                                  _processingRequestKey != null
+                                      ? null
+                                      : () =>
+                                          _setSelectedUserTranslatorRole(
+                                            true,
+                                          ),
+                              icon: const Icon(
+                                Icons.person_add_alt_1_rounded,
+                              ),
+                              label: const Text(
+                                'Орчуулагч эрх өгөх',
+                              ),
+                            ),
                     ),
                   ],
                 ),

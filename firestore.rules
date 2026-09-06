@@ -1,0 +1,746 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // =========================================================
+    // HELPERS
+    // =========================================================
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn()
+        && exists(
+          /databases/$(database)/documents/users/$(request.auth.uid)
+        )
+        && get(
+          /databases/$(database)/documents/users/$(request.auth.uid)
+        ).data.isAdmin == true;
+    }
+
+    function isTranslator() {
+      return isSignedIn()
+        && exists(
+          /databases/$(database)/documents/users/$(request.auth.uid)
+        )
+        && get(
+          /databases/$(database)/documents/users/$(request.auth.uid)
+        ).data.isTranslator == true;
+    }
+
+    function isAssignedTranslator(novelId) {
+      return isTranslator()
+        && exists(
+          /databases/$(database)/documents/novels/$(novelId)
+        )
+        && get(
+          /databases/$(database)/documents/novels/$(novelId)
+        ).data.translatorUids is list
+        && request.auth.uid in get(
+          /databases/$(database)/documents/novels/$(novelId)
+        ).data.translatorUids;
+    }
+
+    function currentUser() {
+      return get(
+        /databases/$(database)/documents/users/$(request.auth.uid)
+      ).data;
+    }
+
+    function hasVip() {
+      return isSignedIn()
+        && (
+          (
+            currentUser().vipExpiresAt != null
+            && currentUser().vipExpiresAt > request.time
+          )
+          ||
+          (
+            currentUser().vvipExpiresAt != null
+            && currentUser().vvipExpiresAt > request.time
+          )
+        );
+    }
+
+    function hasVvip() {
+      return isSignedIn()
+        && currentUser().vvipExpiresAt != null
+        && currentUser().vvipExpiresAt > request.time;
+    }
+
+    // =========================================================
+    // USERS
+    // =========================================================
+
+    match /users/{userId} {
+
+      allow read: if isSignedIn()
+                  && (
+                    request.auth.uid == userId
+                    || isAdmin()
+                  );
+
+      allow create: if isSignedIn()
+                    && request.auth.uid == userId
+                    && request.resource.data.uid == request.auth.uid
+
+                    && request.resource.data.isAdmin == false
+                    && request.resource.data.isTranslator == false
+
+                    && request.resource.data.vipDays == 0
+                    && request.resource.data.vvipDays == 0
+                    && request.resource.data.adult18Days == 0
+                    && request.resource.data.xp == 0
+
+                    && request.resource.data.vipExpiresAt == null
+                    && request.resource.data.vvipExpiresAt == null
+
+                    && request.resource.data.birthdayGiftClaimedYear == null;
+
+      allow update: if isSignedIn()
+                    && (
+                      (
+                        request.auth.uid == userId
+                        && request.resource.data.diff(
+                          resource.data
+                        ).affectedKeys().hasOnly([
+                          'username',
+                          'email',
+                          'phoneNumber',
+                          'displayName',
+                          'profileImageUrl',
+                          'favoriteGenres',
+                          'dislikedGenres',
+                          'likedNovelIds',
+                          'recentViewedNovelIds',
+                          'commentsEnabled',
+                          'bookmarkColor'
+                        ])
+                      )
+                      ||
+                      isAdmin()
+                    );
+
+      allow delete: if false;
+
+      // =======================================================
+      // READING PROGRESS
+      // users/{uid}/readingProgress/{novelId}
+      // =======================================================
+
+      match /readingProgress/{novelId} {
+
+        allow read: if isSignedIn()
+                    && (
+                      request.auth.uid == userId
+                      || isAdmin()
+                    );
+
+        allow create: if isSignedIn()
+                      && request.auth.uid == userId
+
+                      && request.resource.data.keys().hasAll([
+                        'novelId',
+                        'chapterId',
+                        'chapterNumber',
+                        'updatedAt'
+                      ])
+
+                      && request.resource.data.keys().hasOnly([
+                        'novelId',
+                        'chapterId',
+                        'chapterNumber',
+                        'updatedAt'
+                      ])
+
+                      && request.resource.data.novelId == novelId
+                      && request.resource.data.chapterId is string
+                      && request.resource.data.chapterId.size() > 0
+                      && request.resource.data.chapterNumber is int
+                      && request.resource.data.chapterNumber > 0
+                      && request.resource.data.updatedAt == request.time;
+
+        allow update: if isSignedIn()
+                      && request.auth.uid == userId
+
+                      && request.resource.data.keys().hasAll([
+                        'novelId',
+                        'chapterId',
+                        'chapterNumber',
+                        'updatedAt'
+                      ])
+
+                      && request.resource.data.keys().hasOnly([
+                        'novelId',
+                        'chapterId',
+                        'chapterNumber',
+                        'updatedAt'
+                      ])
+
+                      && request.resource.data.novelId == novelId
+                      && request.resource.data.novelId
+                          == resource.data.novelId
+                      && request.resource.data.chapterId is string
+                      && request.resource.data.chapterId.size() > 0
+                      && request.resource.data.chapterNumber is int
+                      && request.resource.data.chapterNumber > 0
+                      && request.resource.data.updatedAt == request.time;
+
+        allow delete: if isSignedIn()
+                      && (
+                        request.auth.uid == userId
+                        || isAdmin()
+                      );
+      }
+    }
+
+    // =========================================================
+    // USERNAMES
+    // =========================================================
+
+    match /usernames/{username} {
+
+      allow read: if true;
+
+      allow create: if isSignedIn()
+                    && request.resource.data.uid
+                        == request.auth.uid;
+
+      allow update: if false;
+      allow delete: if false;
+    }
+
+    // =========================================================
+    // SIX DIGIT IDS
+    // =========================================================
+
+    match /sixDigitIds/{sixDigitId} {
+
+      allow read: if isSignedIn();
+
+      allow create: if isSignedIn()
+                    && request.resource.data.uid
+                        == request.auth.uid;
+
+      allow update: if false;
+      allow delete: if false;
+    }
+
+    // =========================================================
+    // PAYMENT REQUESTS
+    // =========================================================
+
+    match /paymentRequests/{requestId} {
+
+      allow read: if isSignedIn()
+                  && (
+                    resource.data.userUid == request.auth.uid
+                    || isAdmin()
+                  );
+
+      allow create: if isSignedIn()
+
+                    && request.resource.data.userUid
+                        == request.auth.uid
+
+                    && request.resource.data.status
+                        == 'pending'
+
+                    && (
+                      request.resource.data.entitlementType
+                          == 'vip'
+                      ||
+                      request.resource.data.entitlementType
+                          == 'vvip'
+                    )
+
+                    && request.resource.data.sixDigitId
+                        is string
+
+                    && request.resource.data.days
+                        is int
+
+                    && request.resource.data.amount
+                        is int
+
+                    && request.resource.data.months
+                        is int
+
+                    && request.resource.data.days > 0
+                    && request.resource.data.amount > 0
+
+                    && request.resource.data.approvedAt == null
+                    && request.resource.data.approvedBy == null;
+
+      allow update: if isAdmin()
+
+                    && resource.data.status == 'pending'
+
+                    && (
+                      request.resource.data.status == 'approved'
+                      ||
+                      request.resource.data.status == 'rejected'
+                    )
+
+                    && request.resource.data.userUid
+                        == resource.data.userUid
+
+                    && request.resource.data.sixDigitId
+                        == resource.data.sixDigitId
+
+                    && request.resource.data.entitlementType
+                        == resource.data.entitlementType
+
+                    && request.resource.data.planLabel
+                        == resource.data.planLabel
+
+                    && request.resource.data.days
+                        == resource.data.days
+
+                    && request.resource.data.amount
+                        == resource.data.amount
+
+                    && request.resource.data.months
+                        == resource.data.months
+
+                    && request.resource.data.createdAt
+                        == resource.data.createdAt;
+
+      allow delete: if false;
+    }
+
+    // =========================================================
+    // XP REDEEM REQUESTS
+    // 10 XP = 1 VIP хоног
+    // зөвхөн өөртөө
+    // =========================================================
+
+    match /xpRedeemRequests/{requestId} {
+
+      allow read: if isSignedIn()
+                  && (
+                    resource.data.userUid == request.auth.uid
+                    || isAdmin()
+                  );
+
+      allow create: if isSignedIn()
+
+                    && request.resource.data.userUid
+                        == request.auth.uid
+
+                    && request.resource.data.status
+                        == 'pending'
+
+                    && request.resource.data.entitlementType
+                        == 'vip'
+
+                    && request.resource.data.mode
+                        == 'self'
+
+                    && request.resource.data.sixDigitId
+                        is string
+
+                    && request.resource.data.recipientUid
+                        == request.auth.uid
+
+                    && request.resource.data.recipientSixDigitId
+                        == request.resource.data.sixDigitId
+
+                    && request.resource.data.recipientUsername
+                        is string
+
+                    && request.resource.data.days
+                        is int
+
+                    && request.resource.data.days > 0
+
+                    && request.resource.data.xpCost
+                        is int
+
+                    && request.resource.data.xpCost
+                        == request.resource.data.days * 10
+
+                    && request.resource.data.approvedAt == null
+                    && request.resource.data.approvedBy == null
+                    && request.resource.data.rejectedAt == null
+                    && request.resource.data.rejectedBy == null;
+
+      allow update: if isAdmin()
+
+                    && resource.data.status == 'pending'
+
+                    && (
+                      request.resource.data.status == 'approved'
+                      ||
+                      request.resource.data.status == 'rejected'
+                    )
+
+                    && request.resource.data.userUid
+                        == resource.data.userUid
+
+                    && request.resource.data.sixDigitId
+                        == resource.data.sixDigitId
+
+                    && request.resource.data.mode
+                        == resource.data.mode
+
+                    && request.resource.data.recipientUid
+                        == resource.data.recipientUid
+
+                    && request.resource.data.recipientSixDigitId
+                        == resource.data.recipientSixDigitId
+
+                    && request.resource.data.recipientUsername
+                        == resource.data.recipientUsername
+
+                    && request.resource.data.entitlementType
+                        == resource.data.entitlementType
+
+                    && request.resource.data.days
+                        == resource.data.days
+
+                    && request.resource.data.xpCost
+                        == resource.data.xpCost
+
+                    && request.resource.data.createdAt
+                        == resource.data.createdAt;
+
+      allow delete: if false;
+    }
+
+    // =========================================================
+    // BIRTHDAY GIFT REQUESTS
+    // VIP +7 хоног
+    // =========================================================
+
+    match /birthdayGiftRequests/{requestId} {
+
+      allow read: if isSignedIn()
+                  && (
+                    resource.data.userUid == request.auth.uid
+                    || isAdmin()
+                  );
+
+      allow create: if isSignedIn()
+
+                    && request.resource.data.userUid
+                        == request.auth.uid
+
+                    && request.resource.data.status
+                        == 'pending'
+
+                    && request.resource.data.entitlementType
+                        == 'vip'
+
+                    && request.resource.data.days == 7
+                    && request.resource.data.year is int
+
+                    && request.resource.data.approvedAt == null
+                    && request.resource.data.approvedBy == null
+                    && request.resource.data.rejectedAt == null
+                    && request.resource.data.rejectedBy == null;
+
+      allow update: if isAdmin()
+
+                    && resource.data.status == 'pending'
+
+                    && (
+                      request.resource.data.status == 'approved'
+                      ||
+                      request.resource.data.status == 'rejected'
+                    )
+
+                    && request.resource.data.userUid
+                        == resource.data.userUid
+
+                    && request.resource.data.sixDigitId
+                        == resource.data.sixDigitId
+
+                    && request.resource.data.entitlementType
+                        == resource.data.entitlementType
+
+                    && request.resource.data.days
+                        == resource.data.days
+
+                    && request.resource.data.year
+                        == resource.data.year
+
+                    && request.resource.data.createdAt
+                        == resource.data.createdAt;
+
+      allow delete: if false;
+    }
+
+    // =========================================================
+    // COLLECTION GROUP READS
+    // =========================================================
+
+    match /{path=**}/ratings/{ratingUserId} {
+      allow read: if isSignedIn();
+    }
+
+    match /{path=**}/likes/{likeUserId} {
+      allow read: if isSignedIn();
+    }
+
+    match /{path=**}/chapterCatalog/{chapterId} {
+      allow read: if isSignedIn();
+    }
+
+    // =========================================================
+    // NOVELS
+    // =========================================================
+
+    match /novels/{novelId} {
+
+      allow read: if isAdmin()
+                  ||
+                  (
+                    isTranslator()
+                    && request.auth.uid
+                        in resource.data.translatorUids
+                  )
+                  ||
+                  (
+                    isSignedIn()
+                    && resource.data.isPublished == true
+                    && resource.data.isHidden != true
+                  );
+
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+
+      // =======================================================
+      // CHAPTERS
+      // =======================================================
+
+      match /chapters/{chapterId} {
+
+        allow read: if isAdmin()
+                    || isAssignedTranslator(novelId)
+                    ||
+                    (
+                      isSignedIn()
+                      && resource.data.isPublished == true
+                      && resource.data.isHidden != true
+                      &&
+                      (
+                        resource.data.accessLevel == 'free'
+                        ||
+                        (
+                          resource.data.accessLevel == 'vip'
+                          && hasVip()
+                        )
+                        ||
+                        (
+                          resource.data.accessLevel == 'vvip'
+                          && hasVvip()
+                        )
+                      )
+                    );
+
+        // Translator-д write эрхийг ОДОО өгөхгүй.
+        // Дараагийн алхамд draft/review workflow тусад нь хийнэ.
+        allow create: if isAdmin();
+        allow update: if isAdmin();
+        allow delete: if isAdmin();
+      }
+
+      // =======================================================
+      // CHAPTER CATALOG
+      // =======================================================
+
+      match /chapterCatalog/{chapterId} {
+
+        allow read: if isSignedIn();
+
+        allow create: if isAdmin();
+        allow update: if isAdmin();
+        allow delete: if isAdmin();
+      }
+
+      // =======================================================
+      // LIKES
+      // =======================================================
+
+      match /likes/{likeUserId} {
+
+        allow read: if isSignedIn();
+
+        allow create: if isSignedIn()
+                      && likeUserId == request.auth.uid
+                      && request.resource.data.keys().hasAll([
+                        'userUid',
+                        'createdAt'
+                      ])
+                      && request.resource.data.keys().hasOnly([
+                        'userUid',
+                        'createdAt'
+                      ])
+                      && request.resource.data.userUid
+                          == request.auth.uid
+                      && request.resource.data.createdAt
+                          == request.time;
+
+        allow update: if false;
+
+        allow delete: if isSignedIn()
+                      && (
+                        likeUserId == request.auth.uid
+                        || isAdmin()
+                      );
+      }
+
+      // =======================================================
+      // RATINGS
+      // =======================================================
+
+      match /ratings/{ratingUserId} {
+
+        allow read: if isSignedIn();
+
+        allow create: if isSignedIn()
+                      && ratingUserId == request.auth.uid
+                      && request.resource.data.keys().hasAll([
+                        'userUid',
+                        'rating',
+                        'createdAt',
+                        'updatedAt'
+                      ])
+                      && request.resource.data.keys().hasOnly([
+                        'userUid',
+                        'rating',
+                        'createdAt',
+                        'updatedAt'
+                      ])
+                      && request.resource.data.userUid
+                          == request.auth.uid
+                      && request.resource.data.rating is int
+                      && request.resource.data.rating >= 1
+                      && request.resource.data.rating <= 5
+                      && request.resource.data.createdAt
+                          == request.time
+                      && request.resource.data.updatedAt
+                          == request.time;
+
+        allow update: if isSignedIn()
+                      && ratingUserId == request.auth.uid
+                      && request.resource.data.keys().hasAll([
+                        'userUid',
+                        'rating',
+                        'createdAt',
+                        'updatedAt'
+                      ])
+                      && request.resource.data.keys().hasOnly([
+                        'userUid',
+                        'rating',
+                        'createdAt',
+                        'updatedAt'
+                      ])
+                      && request.resource.data.userUid
+                          == resource.data.userUid
+                      && request.resource.data.userUid
+                          == request.auth.uid
+                      && request.resource.data.createdAt
+                          == resource.data.createdAt
+                      && request.resource.data.rating is int
+                      && request.resource.data.rating >= 1
+                      && request.resource.data.rating <= 5
+                      && request.resource.data.updatedAt
+                          == request.time;
+
+        allow delete: if isSignedIn()
+                      && (
+                        ratingUserId == request.auth.uid
+                        || isAdmin()
+                      );
+      }
+
+      // =======================================================
+      // COMMENTS
+      // =======================================================
+
+      match /comments/{commentId} {
+
+        allow read: if isSignedIn();
+
+        allow create: if isSignedIn()
+                      && request.resource.data.keys().hasAll([
+                        'userUid',
+                        'username',
+                        'text',
+                        'createdAt',
+                        'updatedAt'
+                      ])
+                      && request.resource.data.keys().hasOnly([
+                        'userUid',
+                        'username',
+                        'text',
+                        'createdAt',
+                        'updatedAt'
+                      ])
+                      && request.resource.data.userUid
+                          == request.auth.uid
+                      && request.resource.data.username is string
+                      && request.resource.data.username.size() >= 1
+                      && request.resource.data.username.size() <= 50
+                      && request.resource.data.text is string
+                      && request.resource.data.text.size() >= 1
+                      && request.resource.data.text.size() <= 2000
+                      && request.resource.data.createdAt
+                          == request.time
+                      && request.resource.data.updatedAt
+                          == request.time;
+
+        allow update: if isSignedIn()
+                      && resource.data.userUid
+                          == request.auth.uid
+                      && request.resource.data.keys().hasAll([
+                        'userUid',
+                        'username',
+                        'text',
+                        'createdAt',
+                        'updatedAt'
+                      ])
+                      && request.resource.data.keys().hasOnly([
+                        'userUid',
+                        'username',
+                        'text',
+                        'createdAt',
+                        'updatedAt'
+                      ])
+                      && request.resource.data.userUid
+                          == resource.data.userUid
+                      && request.resource.data.username
+                          == resource.data.username
+                      && request.resource.data.createdAt
+                          == resource.data.createdAt
+                      && request.resource.data.text is string
+                      && request.resource.data.text.size() >= 1
+                      && request.resource.data.text.size() <= 2000
+                      && request.resource.data.updatedAt
+                          == request.time;
+
+        allow delete: if isSignedIn()
+                      && (
+                        resource.data.userUid
+                            == request.auth.uid
+                        || isAdmin()
+                      );
+      }
+    }
+
+    // =========================================================
+    // БУСАД БҮХ COLLECTION
+    // =========================================================
+
+    match /{document=**} {
+      allow read: if false;
+      allow write: if false;
+    }
+  }
+}

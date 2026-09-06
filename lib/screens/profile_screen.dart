@@ -9,6 +9,7 @@ import '../services/user_repository.dart';
 import '../theme/app_theme.dart';
 import '../widgets/premium_widgets.dart';
 import 'admin_screen.dart';
+import 'translator_screen.dart';
 import 'subscription_screen.dart';
 import 'xp_redeem_screen.dart';
 
@@ -24,7 +25,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final UserRepository _userRepository = UserRepository();
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
-bool _sendingBirthdayGiftRequest = false;
+  bool _sendingBirthdayGiftRequest = false;
 
   late Future<UserModel?> _userFuture;
 
@@ -69,13 +70,32 @@ bool _sendingBirthdayGiftRequest = false;
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text('Профайл зураг сонгох', style: AppTypography.sectionTitle()),
+              Text(
+                'Профайл зураг сонгох',
+                style: AppTypography.sectionTitle(),
+              ),
               const SizedBox(height: AppSpacing.lg),
               Row(
                 children: [
-                  Expanded(child: _ProfileAvatarChoice(label: 'Эрэгтэй', icon: Icons.man_rounded, selected: user.avatarType == 'male', onTap: () => Navigator.pop(context, 'male'))),
+                  Expanded(
+                    child: _ProfileAvatarChoice(
+                      label: 'Эрэгтэй',
+                      icon: Icons.man_rounded,
+                      selected: user.avatarType == 'male',
+                      onTap: () =>
+                          Navigator.pop(context, 'male'),
+                    ),
+                  ),
                   const SizedBox(width: AppSpacing.md),
-                  Expanded(child: _ProfileAvatarChoice(label: 'Эмэгтэй', icon: Icons.woman_rounded, selected: user.avatarType == 'female', onTap: () => Navigator.pop(context, 'female'))),
+                  Expanded(
+                    child: _ProfileAvatarChoice(
+                      label: 'Эмэгтэй',
+                      icon: Icons.woman_rounded,
+                      selected: user.avatarType == 'female',
+                      onTap: () =>
+                          Navigator.pop(context, 'female'),
+                    ),
+                  ),
                 ],
               ),
             ],
@@ -84,11 +104,24 @@ bool _sendingBirthdayGiftRequest = false;
       ),
     );
 
-    if (selected == null || selected == user.avatarType) return;
-    await _userRepository.updateMutableProfileFields(user.uid, {'avatarType': selected});
+    if (selected == null || selected == user.avatarType) {
+      return;
+    }
+
+    await _userRepository.updateMutableProfileFields(
+      user.uid,
+      {'avatarType': selected},
+    );
+
     if (!mounted) return;
+
     setState(() => _userFuture = _loadUser());
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Профайл зураг шинэчлэгдлээ.')));
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Профайл зураг шинэчлэгдлээ.'),
+      ),
+    );
   }
 
   Future<void> _logout() async {
@@ -100,165 +133,164 @@ bool _sendingBirthdayGiftRequest = false;
       (route) => route.isFirst,
     );
   }
-Future<void> _requestBirthdayGift(UserModel user) async {
-  if (_sendingBirthdayGiftRequest) {
-    return;
-  }
 
-  final firebaseUser = _authService.currentUser;
-
-  if (firebaseUser == null) {
-    return;
-  }
-
-  final birthDate = user.birthDate;
-
-  if (birthDate == null) {
-    return;
-  }
-
-  final now = DateTime.now();
-
-  final isBirthdayToday =
-      now.month == birthDate.month &&
-      now.day == birthDate.day;
-
-  if (!isBirthdayToday) {
-    _showBirthdayMessage(
-      'Төрсөн өдрийн бэлгийг зөвхөн төрсөн өдрөөрөө авах боломжтой.',
-    );
-    return;
-  }
-
-  if (user.birthdayGiftClaimedYear == now.year) {
-    _showBirthdayMessage(
-      'Та энэ жилийн төрсөн өдрийн бэлгээ аль хэдийн авсан байна.',
-    );
-    return;
-  }
-
-  setState(() {
-    _sendingBirthdayGiftRequest = true;
-  });
-
-  try {
-    // Firestore-оос хамгийн сүүлийн user мэдээллийг дахин шалгана.
-    final userSnapshot = await _firestore
-        .collection('users')
-        .doc(firebaseUser.uid)
-        .get();
-
-    if (!userSnapshot.exists) {
-      throw Exception(
-        'Хэрэглэгчийн мэдээлэл олдсонгүй.',
-      );
+  Future<void> _requestBirthdayGift(UserModel user) async {
+    if (_sendingBirthdayGiftRequest) {
+      return;
     }
 
-    final latestData =
-        userSnapshot.data() ?? <String, dynamic>{};
+    final firebaseUser = _authService.currentUser;
 
-    final latestClaimedYear =
-        latestData['birthdayGiftClaimedYear'];
-
-    if (latestClaimedYear == now.year) {
-      throw Exception(
-        'Энэ жилийн төрсөн өдрийн бэлгийг аль хэдийн авсан байна.',
-      );
+    if (firebaseUser == null) {
+      return;
     }
 
-    // Тухайн жилийн pending хүсэлт байгаа эсэхийг шалгана.
-    final existingRequests = await _firestore
-        .collection('birthdayGiftRequests')
-        .where(
-          'userUid',
-          isEqualTo: firebaseUser.uid,
-        )
-        .where(
-          'status',
-          isEqualTo: 'pending',
-        )
-        .get();
+    final birthDate = user.birthDate;
 
-    final alreadyPendingThisYear =
-        existingRequests.docs.any(
-      (document) {
-        final data = document.data();
-
-        return _readBirthdayYear(
-              data['year'],
-            ) ==
-            now.year;
-      },
-    );
-
-    if (alreadyPendingThisYear) {
-      throw Exception(
-        'Таны төрсөн өдрийн бэлгийн хүсэлт аль хэдийн хүлээгдэж байна.',
-      );
+    if (birthDate == null) {
+      return;
     }
 
-    await _firestore
-        .collection('birthdayGiftRequests')
-        .add(
-      {
-        'userUid': firebaseUser.uid,
-        'sixDigitId': user.sixDigitId,
-        'entitlementType': 'vip',
-        'days': 7,
-        'year': now.year,
-        'status': 'pending',
-        'createdAt': FieldValue.serverTimestamp(),
-        'approvedAt': null,
-        'approvedBy': null,
-        'rejectedAt': null,
-        'rejectedBy': null,
-      },
-    );
+    final now = DateTime.now();
 
+    final isBirthdayToday =
+        now.month == birthDate.month &&
+        now.day == birthDate.day;
+
+    if (!isBirthdayToday) {
+      _showBirthdayMessage(
+        'Төрсөн өдрийн бэлгийг зөвхөн төрсөн өдрөөрөө авах боломжтой.',
+      );
+      return;
+    }
+
+    if (user.birthdayGiftClaimedYear == now.year) {
+      _showBirthdayMessage(
+        'Та энэ жилийн төрсөн өдрийн бэлгээ аль хэдийн авсан байна.',
+      );
+      return;
+    }
+
+    setState(() {
+      _sendingBirthdayGiftRequest = true;
+    });
+
+    try {
+      final userSnapshot = await _firestore
+          .collection('users')
+          .doc(firebaseUser.uid)
+          .get();
+
+      if (!userSnapshot.exists) {
+        throw Exception(
+          'Хэрэглэгчийн мэдээлэл олдсонгүй.',
+        );
+      }
+
+      final latestData =
+          userSnapshot.data() ?? <String, dynamic>{};
+
+      final latestClaimedYear =
+          latestData['birthdayGiftClaimedYear'];
+
+      if (latestClaimedYear == now.year) {
+        throw Exception(
+          'Энэ жилийн төрсөн өдрийн бэлгийг аль хэдийн авсан байна.',
+        );
+      }
+
+      final existingRequests = await _firestore
+          .collection('birthdayGiftRequests')
+          .where(
+            'userUid',
+            isEqualTo: firebaseUser.uid,
+          )
+          .where(
+            'status',
+            isEqualTo: 'pending',
+          )
+          .get();
+
+      final alreadyPendingThisYear =
+          existingRequests.docs.any(
+        (document) {
+          final data = document.data();
+
+          return _readBirthdayYear(
+                data['year'],
+              ) ==
+              now.year;
+        },
+      );
+
+      if (alreadyPendingThisYear) {
+        throw Exception(
+          'Таны төрсөн өдрийн бэлгийн хүсэлт аль хэдийн хүлээгдэж байна.',
+        );
+      }
+
+      await _firestore
+          .collection('birthdayGiftRequests')
+          .add(
+        {
+          'userUid': firebaseUser.uid,
+          'sixDigitId': user.sixDigitId,
+          'entitlementType': 'vip',
+          'days': 7,
+          'year': now.year,
+          'status': 'pending',
+          'createdAt': FieldValue.serverTimestamp(),
+          'approvedAt': null,
+          'approvedBy': null,
+          'rejectedAt': null,
+          'rejectedBy': null,
+        },
+      );
+
+      if (!mounted) return;
+
+      _showBirthdayMessage(
+        '🎂 VIP +7 хоногийн хүсэлт амжилттай илгээгдлээ.',
+      );
+    } catch (error) {
+      if (!mounted) return;
+
+      _showBirthdayMessage(
+        'Хүсэлт илгээх үед алдаа гарлаа: $error',
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _sendingBirthdayGiftRequest = false;
+        });
+      }
+    }
+  }
+
+  int _readBirthdayYear(dynamic value) {
+    if (value is int) {
+      return value;
+    }
+
+    if (value is num) {
+      return value.toInt();
+    }
+
+    return int.tryParse(
+          value?.toString() ?? '',
+        ) ??
+        0;
+  }
+
+  void _showBirthdayMessage(String message) {
     if (!mounted) return;
 
-    _showBirthdayMessage(
-      '🎂 VIP +7 хоногийн хүсэлт амжилттай илгээгдлээ.',
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+      ),
     );
-  } catch (error) {
-    if (!mounted) return;
-
-    _showBirthdayMessage(
-      'Хүсэлт илгээх үед алдаа гарлаа: $error',
-    );
-  } finally {
-    if (mounted) {
-      setState(() {
-        _sendingBirthdayGiftRequest = false;
-      });
-    }
   }
-}
-
-int _readBirthdayYear(dynamic value) {
-  if (value is int) {
-    return value;
-  }
-
-  if (value is num) {
-    return value.toInt();
-  }
-
-  return int.tryParse(
-        value?.toString() ?? '',
-      ) ??
-      0;
-}
-
-void _showBirthdayMessage(String message) {
-  if (!mounted) return;
-
-  ScaffoldMessenger.of(context).showSnackBar(
-    SnackBar(
-      content: Text(message),
-    ),
-  );
-}
 
   @override
   Widget build(BuildContext context) {
@@ -401,6 +433,47 @@ void _showBirthdayMessage(String message) {
 
                     _buildBirthdayCard(user),
 
+                    if (user.isTranslator) ...[
+                      const SizedBox(
+                        height: AppSpacing.xxl,
+                      ),
+
+                      Text(
+                        'Орчуулагч',
+                        style: AppTypography.sectionTitle(),
+                      ),
+
+                      const SizedBox(
+                        height: AppSpacing.md,
+                      ),
+
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: () async {
+                            await Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) =>
+                                    const TranslatorScreen(),
+                              ),
+                            );
+
+                            if (!mounted) return;
+
+                            setState(() {
+                              _userFuture = _loadUser();
+                            });
+                          },
+                          icon: const Icon(
+                            Icons.translate_rounded,
+                          ),
+                          label: const Text(
+                            'Орчуулагчийн хэсэг',
+                          ),
+                        ),
+                      ),
+                    ],
+
                     if (user.isAdmin) ...[
                       const SizedBox(
                         height: AppSpacing.xxl,
@@ -481,27 +554,27 @@ void _showBirthdayMessage(String message) {
           GestureDetector(
             onTap: () => _changeAvatar(user),
             child: Container(
-            width: 76,
-            height: 76,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: AppColors.surface,
-              border: Border.all(
+              width: 76,
+              height: 76,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: AppColors.surface,
+                border: Border.all(
+                  color: AppColors.gold,
+                  width: 2,
+                ),
+              ),
+              alignment: Alignment.center,
+              child: Icon(
+                user.avatarType == 'male'
+                    ? Icons.man_rounded
+                    : user.avatarType == 'female'
+                        ? Icons.woman_rounded
+                        : Icons.person_rounded,
                 color: AppColors.gold,
-                width: 2,
+                size: 48,
               ),
             ),
-            alignment: Alignment.center,
-            child: Icon(
-              user.avatarType == 'male'
-                  ? Icons.man_rounded
-                  : user.avatarType == 'female'
-                      ? Icons.woman_rounded
-                      : Icons.person_rounded,
-              color: AppColors.gold,
-              size: 48,
-            ),
-          ),
           ),
 
           const SizedBox(
@@ -621,117 +694,116 @@ void _showBirthdayMessage(String message) {
     );
   }
 
- Widget _buildBirthdayCard(UserModel user) {
-  final birthDate = user.birthDate;
+  Widget _buildBirthdayCard(UserModel user) {
+    final birthDate = user.birthDate;
 
-  if (birthDate == null) {
-    return const SizedBox.shrink();
-  }
+    if (birthDate == null) {
+      return const SizedBox.shrink();
+    }
 
-  final now = DateTime.now();
+    final now = DateTime.now();
 
-  final isBirthdayToday =
-      now.month == birthDate.month &&
-      now.day == birthDate.day;
+    final isBirthdayToday =
+        now.month == birthDate.month &&
+        now.day == birthDate.day;
 
-  final alreadyClaimedThisYear =
-      user.birthdayGiftClaimedYear == now.year;
+    final alreadyClaimedThisYear =
+        user.birthdayGiftClaimedYear == now.year;
 
-  final canClaim =
-      isBirthdayToday &&
-      !alreadyClaimedThisYear;
+    final canClaim =
+        isBirthdayToday &&
+        !alreadyClaimedThisYear;
 
-  return PremiumCard(
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            const Icon(
-              Icons.card_giftcard_rounded,
-              color: AppColors.gold,
-              size: 28,
-            ),
-            const SizedBox(
-              width: AppSpacing.md,
-            ),
-            Expanded(
-              child: Column(
-                crossAxisAlignment:
-                    CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Төрсөн өдрийн бэлэг',
-                    style: AppTypography.cardTitle(),
-                  ),
-                  const SizedBox(
-                    height: 2,
-                  ),
-                  Text(
-                    'VIP +7 хоног',
-                    style: AppTypography.meta(
-                      color: AppColors.gold,
+    return PremiumCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.card_giftcard_rounded,
+                color: AppColors.gold,
+                size: 28,
+              ),
+              const SizedBox(
+                width: AppSpacing.md,
+              ),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment:
+                      CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Төрсөн өдрийн бэлэг',
+                      style: AppTypography.cardTitle(),
                     ),
-                  ),
-                ],
+                    const SizedBox(
+                      height: 2,
+                    ),
+                    Text(
+                      'VIP +7 хоног',
+                      style: AppTypography.meta(
+                        color: AppColors.gold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+
+          const SizedBox(
+            height: AppSpacing.md,
+          ),
+
+          Text(
+            alreadyClaimedThisYear
+                ? '🎉 Энэ жилийн бэлгээ авсан байна.'
+                : isBirthdayToday
+                    ? '🎂 Төрсөн өдрийн мэнд! VIP +7 хоногийн бэлгээ аваарай.'
+                    : 'Зөвхөн төрсөн өдрөөрөө идэвхжинэ.',
+            style: AppTypography.body(),
+          ),
+
+          if (canClaim) ...[
+            const SizedBox(
+              height: AppSpacing.lg,
+            ),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed:
+                    _sendingBirthdayGiftRequest
+                        ? null
+                        : () =>
+                            _requestBirthdayGift(
+                              user,
+                            ),
+                icon: _sendingBirthdayGiftRequest
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child:
+                            CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Icon(
+                        Icons.card_giftcard_rounded,
+                      ),
+                label: Text(
+                  _sendingBirthdayGiftRequest
+                      ? 'Илгээж байна...'
+                      : 'VIP +7 хоног авах',
+                ),
               ),
             ),
           ],
-        ),
-
-        const SizedBox(
-          height: AppSpacing.md,
-        ),
-
-        Text(
-          alreadyClaimedThisYear
-              ? '🎉 Энэ жилийн бэлгээ авсан байна.'
-              : isBirthdayToday
-                  ? '🎂 Төрсөн өдрийн мэнд! VIP +7 хоногийн бэлгээ аваарай.'
-                  : 'Зөвхөн төрсөн өдрөөрөө идэвхжинэ.',
-          style: AppTypography.body(),
-        ),
-
-        if (canClaim) ...[
-          const SizedBox(
-            height: AppSpacing.lg,
-          ),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed:
-                  _sendingBirthdayGiftRequest
-                      ? null
-                      : () =>
-                          _requestBirthdayGift(
-                            user,
-                          ),
-              icon: _sendingBirthdayGiftRequest
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child:
-                          CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : const Icon(
-                      Icons
-                          .card_giftcard_rounded,
-                    ),
-              label: Text(
-                _sendingBirthdayGiftRequest
-                    ? 'Илгээж байна...'
-                    : 'VIP +7 хоног авах',
-              ),
-            ),
-          ),
         ],
-      ],
-    ),
-  );
-}
+      ),
+    );
+  }
 
   Widget _buildSettingsRows(UserModel user) {
     return PremiumCard(
@@ -983,7 +1055,12 @@ class _ProfileAvatarChoice extends StatelessWidget {
   final bool selected;
   final VoidCallback onTap;
 
-  const _ProfileAvatarChoice({required this.label, required this.icon, required this.selected, required this.onTap});
+  const _ProfileAvatarChoice({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -991,17 +1068,37 @@ class _ProfileAvatarChoice extends StatelessWidget {
       onTap: onTap,
       borderRadius: BorderRadius.circular(16),
       child: Container(
-        padding: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
+        padding: const EdgeInsets.symmetric(
+          vertical: AppSpacing.lg,
+        ),
         decoration: BoxDecoration(
-          color: selected ? AppColors.primary.withValues(alpha: 0.18) : AppColors.background,
+          color: selected
+              ? AppColors.primary.withValues(alpha: 0.18)
+              : AppColors.background,
           borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: selected ? AppColors.primaryLight : AppColors.border, width: selected ? 2 : 1),
+          border: Border.all(
+            color: selected
+                ? AppColors.primaryLight
+                : AppColors.border,
+            width: selected ? 2 : 1,
+          ),
         ),
         child: Column(
           children: [
-            Icon(icon, size: 52, color: selected ? AppColors.primaryLight : AppColors.textSecondary),
+            Icon(
+              icon,
+              size: 52,
+              color: selected
+                  ? AppColors.primaryLight
+                  : AppColors.textSecondary,
+            ),
             const SizedBox(height: AppSpacing.sm),
-            Text(label, style: AppTypography.body(color: AppColors.textPrimary)),
+            Text(
+              label,
+              style: AppTypography.body(
+                color: AppColors.textPrimary,
+              ),
+            ),
           ],
         ),
       ),
