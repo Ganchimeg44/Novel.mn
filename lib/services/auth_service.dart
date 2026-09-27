@@ -15,6 +15,8 @@ class AuthService {
 
   User? get currentUser => _auth.currentUser;
 
+  String? get currentPhoneNumber => _auth.currentUser?.phoneNumber;
+
   Stream<User?> authStateChanges() => _auth.authStateChanges();
 
   // ---------------------------------------------------------------------
@@ -59,6 +61,13 @@ class AuthService {
     return user.linkWithCredential(credential);
   }
 
+  /// Нууц үгээ мартсан үед имэйл рүү сэргээх холбоос илгээнэ.
+  Future<void> sendPasswordResetEmail({
+    required String email,
+  }) {
+    return _auth.sendPasswordResetEmail(email: email);
+  }
+
   // ---------------------------------------------------------------------
   // Утасны дугаар (OTP)
   // ---------------------------------------------------------------------
@@ -96,6 +105,70 @@ class AuthService {
       smsCode: smsCode,
     );
     return _auth.signInWithCredential(credential);
+  }
+
+  PhoneAuthCredential createPhoneCredential({
+    required String verificationId,
+    required String smsCode,
+  }) {
+    return PhoneAuthProvider.credential(
+      verificationId: verificationId,
+      smsCode: smsCode,
+    );
+  }
+
+  Future<void> reauthenticateWithPassword({
+    required String password,
+  }) async {
+    final user = _auth.currentUser;
+    final email = user?.email;
+
+    if (user == null || email == null || email.isEmpty) {
+      throw StateError('Хэрэглэгчийн бүртгэл олдсонгүй.');
+    }
+
+    final credential = EmailAuthProvider.credential(
+      email: email,
+      password: password,
+    );
+
+    await user.reauthenticateWithCredential(credential);
+  }
+
+  Future<void> updatePassword(String newPassword) async {
+    final user = _auth.currentUser;
+    if (user == null) {
+      throw StateError('Хэрэглэгч нэвтрээгүй байна.');
+    }
+
+    await user.updatePassword(newPassword);
+  }
+
+
+  Future<void> updatePhoneNumber({
+    required String verificationId,
+    required String smsCode,
+  }) async {
+    final user = _auth.currentUser;
+
+    if (user == null) {
+      throw StateError('Хэрэглэгч нэвтрээгүй байна.');
+    }
+
+    final credential = PhoneAuthProvider.credential(
+      verificationId: verificationId,
+      smsCode: smsCode.trim(),
+    );
+
+    await user.updatePhoneNumber(credential);
+    await user.reload();
+
+    final refreshedUser = _auth.currentUser;
+    if (refreshedUser == null) {
+      throw StateError('Хэрэглэгчийн бүртгэл олдсонгүй.');
+    }
+
+    await refreshedUser.getIdToken(true);
   }
 
   Future<void> signOut() => _auth.signOut();

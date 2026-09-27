@@ -154,10 +154,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
               else
                 _AuthTextField(
                   controller: _phoneCtrl,
-                  label: 'Утасны дугаар (+976...)',
+                  label: 'Утасны дугаар',
                   keyboardType: TextInputType.phone,
                   validator: (v) =>
-                      (v == null || v.trim().length < 8) ? 'Дугаараа шалгана уу' : null,
+                      (v == null || !RegExp(r'^\d{8}$').hasMatch(v.trim()))
+                      ? 'Утасны дугаараа шалгана уу'
+                      : null,
                 ),
               const SizedBox(height: 14),
               // Утасны бүртгэлд ч дараа нь username/имэйлээр нэвтрэх

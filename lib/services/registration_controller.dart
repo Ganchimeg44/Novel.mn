@@ -17,6 +17,31 @@ class RegistrationController {
   final AuthService _auth;
   final UserRepository _users;
 
+  /// Монгол утасны дугаарыг Firebase-д ашиглах нэг стандарт
+  /// +976XXXXXXXX хэлбэрт оруулна.
+  String normalizePhoneNumber(String value) {
+    var phone = value.trim().replaceAll(
+      RegExp(r'[\s\-\(\)]'),
+      '',
+    );
+
+    if (phone.startsWith('00976')) {
+      phone = '+${phone.substring(2)}';
+    } else if (phone.startsWith('976') && !phone.startsWith('+976')) {
+      phone = '+$phone';
+    } else if (RegExp(r'^\d{8}$').hasMatch(phone)) {
+      phone = '+976$phone';
+    }
+
+    if (!RegExp(r'^\+976\d{8}$').hasMatch(phone)) {
+      throw const FormatException(
+        'Монгол утасны дугаараа 8 оронтой эсвэл +976XXXXXXXX хэлбэрээр оруулна уу.',
+      );
+    }
+
+    return phone;
+  }
+
   // ---------------------------------------------------------------------
   // Бүртгүүлэх — Имэйл (Gmail)
   // ---------------------------------------------------------------------
@@ -59,8 +84,10 @@ class RegistrationController {
     required void Function(String verificationId) onCodeSent,
     required void Function(FirebaseAuthException error) onFailed,
   }) {
+    final normalizedPhone = normalizePhoneNumber(phoneNumber);
+
     return _auth.sendPhoneVerificationCode(
-      phoneNumber: phoneNumber,
+      phoneNumber: normalizedPhone,
       onCodeSent: onCodeSent,
       onFailed: onFailed,
     );
@@ -86,6 +113,8 @@ class RegistrationController {
       throw StateError('Энэ хэрэглэгчийн нэр аль хэдийн ашиглагдсан байна.');
     }
 
+    final normalizedPhone = normalizePhoneNumber(phoneNumber);
+
     final phoneCredential = await _auth.signInWithSmsCode(
       verificationId: verificationId,
       smsCode: smsCode,
@@ -99,9 +128,10 @@ class RegistrationController {
       uid: uid,
       username: username,
       email: email,
-      phoneNumber: phoneNumber,
+      phoneNumber: normalizedPhone,
       birthDate: birthDate,
       avatarType: avatarType,
+      phoneVerified: true,
     );
   }
 
@@ -112,6 +142,7 @@ class RegistrationController {
     required String? phoneNumber,
     required DateTime birthDate,
     required String avatarType,
+    bool phoneVerified = false,
   }) async {
     if (avatarType != 'male' && avatarType != 'female') {
       throw ArgumentError('Avatar сонголт буруу байна.');
@@ -120,6 +151,14 @@ class RegistrationController {
     try {
       final sixDigitId = await _users.generateAndReserveSixDigitId(uid);
       await _users.reserveUsername(username: username, uid: uid, email: email);
+
+      if (phoneVerified && phoneNumber != null && phoneNumber.isNotEmpty) {
+        await _users.reservePhoneNumber(
+          phoneNumber: phoneNumber,
+          uid: uid,
+          email: email,
+        );
+      }
 
       final user = UserModel(
         uid: uid,
@@ -146,29 +185,259 @@ class RegistrationController {
   // Нэвтрэх — Username / Имэйл + нууц үг
   // ---------------------------------------------------------------------
 
-  /// [identifier] нь username эсвэл имэйл байж болно; username бол
-  /// эхлээд холбогдох имэйлийг Firestore-с олж, дараа нь тэр имэйлээр
-  /// Firebase Auth руу нэвтэрнэ.
+  /// [identifier] нь username, Gmail эсвэл баталгаажсан утасны дугаар
+  /// байж болно. Firebase Auth-ийн Email/Password credential ашиглан
+  /// нууц үгээр нэвтэрнэ.
   Future<UserModel?> loginWithPassword({
     required String identifier,
     required String password,
   }) async {
-    final looksLikeEmail = identifier.contains('@');
-    final email = looksLikeEmail
-        ? identifier
-        : await _users.getEmailForUsername(identifier);
+    final value = identifier.trim();
+    final looksLikeEmail = value.contains('@');
+    final looksLikePhone = RegExp(r'^\d{8}$').hasMatch(value);
+
+    String? email;
+
+    if (looksLikeEmail) {
+      email = value;
+    } else if (looksLikePhone) {
+      final normalizedPhone = normalizePhoneNumber(value);
+      email = await _users.getEmailForPhoneNumber(normalizedPhone);
+    } else {
+      email = await _users.getEmailForUsername(value);
+    }
 
     if (email == null) {
-      throw StateError(
-        'Энэ хэрэглэгчийн нэртэй, имэйл холбогдсон бүртгэл олдсонгүй.',
-      );
+      throw StateError('Бүртгэл олдсонгүй.');
     }
 
     final credential = await _auth.signInWithEmail(
       email: email,
       password: password,
     );
-    return _users.getUserByUid(credential.user!.uid);
+
+    final firebaseUser = credential.user!;
+
+    // Хуучин phone хэрэглэгчдийн phoneNumbers lookup байхгүй бол
+    // Firebase Auth дээрх баталгаажсан утасны дугаараас автоматаар нөхнө.
+    final verifiedPhone = firebaseUser.phoneNumber;
+    final authEmail = firebaseUser.email;
+
+    if (verifiedPhone != null &&
+        verifiedPhone.isNotEmpty &&
+        authEmail != null &&
+        authEmail.isNotEmpty) {
+      await _users.reservePhoneNumber(
+        phoneNumber: verifiedPhone,
+        uid: firebaseUser.uid,
+        email: authEmail,
+      );
+    }
+
+    return _users.getUserByUid(firebaseUser.uid);
+  }
+
+  // ---------------------------------------------------------------------
+  // Утасны дугаар солих
+  // ---------------------------------------------------------------------
+
+  Future<void> startPhoneNumberChange({
+    required String newPhoneNumber,
+    required void Function(String verificationId) onCodeSent,
+    required void Function(FirebaseAuthException error) onFailed,
+  }) async {
+    final normalizedPhone = normalizePhoneNumber(newPhoneNumber);
+    final currentPhone = _auth.currentPhoneNumber;
+
+    if (currentPhone == normalizedPhone) {
+      throw const FormatException(
+        'Шинэ утасны дугаар одоогийн дугаартай ижил байна.',
+      );
+    }
+
+    final existingUid =
+        await _users.getUidForPhoneNumber(normalizedPhone);
+
+    if (existingUid != null) {
+      throw StateError(
+        'Энэ утасны дугаар аль хэдийн бүртгэлтэй байна.',
+      );
+    }
+
+    await _auth.sendPhoneVerificationCode(
+      phoneNumber: normalizedPhone,
+      onCodeSent: onCodeSent,
+      onFailed: onFailed,
+    );
+  }
+
+  Future<void> completePhoneNumberChange({
+    required String newPhoneNumber,
+    required String verificationId,
+    required String smsCode,
+  }) async {
+    final user = _auth.currentUser;
+
+    if (user == null) {
+      throw StateError('Хэрэглэгч нэвтрээгүй байна.');
+    }
+
+    final uid = user.uid;
+    final email = user.email;
+
+    if (email == null || email.isEmpty) {
+      throw StateError('Хэрэглэгчийн Gmail бүртгэл олдсонгүй.');
+    }
+
+    final normalizedPhone = normalizePhoneNumber(newPhoneNumber);
+    final oldPhone = _auth.currentPhoneNumber;
+
+    final existingUid =
+        await _users.getUidForPhoneNumber(normalizedPhone);
+
+    if (existingUid != null && existingUid != uid) {
+      throw StateError(
+        'Энэ утасны дугаар аль хэдийн бүртгэлтэй байна.',
+      );
+    }
+
+    // SMS credential зөв бол Firebase Auth дээрх утсыг эхэлж шинэчилнэ.
+    await _auth.updatePhoneNumber(
+      verificationId: verificationId,
+      smsCode: smsCode,
+    );
+
+    // Шинэ баталгаажсан дугаарын lookup үүсгэнэ.
+    await _users.reservePhoneNumber(
+      phoneNumber: normalizedPhone,
+      uid: uid,
+      email: email,
+    );
+
+    // Firestore profile дээрх утасны дугаарыг шинэчилнэ.
+    await _users.updateMutableProfileFields(
+      uid,
+      {
+        'phoneNumber': normalizedPhone,
+      },
+    );
+
+    // Хуучин lookup байвал хамгийн сүүлд устгана.
+    if (oldPhone != null &&
+        oldPhone.isNotEmpty &&
+        oldPhone != normalizedPhone) {
+      await _users.removePhoneNumber(
+        phoneNumber: oldPhone,
+        uid: uid,
+      );
+    }
+  }
+
+  // ---------------------------------------------------------------------
+  // Нууц үг солих
+  // ---------------------------------------------------------------------
+
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+    required String confirmPassword,
+  }) async {
+    if (currentPassword.isEmpty) {
+      throw const FormatException('Хуучин нууц үгээ оруулна уу.');
+    }
+
+    if (newPassword.length < 6) {
+      throw const FormatException(
+        'Шинэ нууц үг хамгийн багадаа 6 тэмдэгт байна.',
+      );
+    }
+
+    if (newPassword != confirmPassword) {
+      throw const FormatException('Шинэ нууц үг таарахгүй байна.');
+    }
+
+    if (currentPassword == newPassword) {
+      throw const FormatException(
+        'Шинэ нууц үг хуучин нууц үгээс өөр байна.',
+      );
+    }
+
+    await _auth.reauthenticateWithPassword(
+      password: currentPassword,
+    );
+
+    await _auth.updatePassword(newPassword);
+  }
+
+  // ---------------------------------------------------------------------
+  // Нууц үг сэргээх — Gmail
+  // ---------------------------------------------------------------------
+
+  Future<void> resetPasswordWithEmail(String email) async {
+    final value = email.trim();
+
+    if (value.isEmpty || !value.contains('@')) {
+      throw const FormatException('Gmail хаягаа шалгана уу.');
+    }
+
+    await _auth.sendPasswordResetEmail(email: value);
+  }
+
+
+  Future<void> startPhonePasswordReset({
+    required String phoneNumber,
+    required void Function(String verificationId) onCodeSent,
+    required void Function(FirebaseAuthException error) onFailed,
+  }) async {
+    final normalizedPhone = normalizePhoneNumber(phoneNumber);
+
+    final uid = await _users.getUidForPhoneNumber(normalizedPhone);
+    if (uid == null) {
+      throw StateError('Энэ утасны дугаар бүртгэлгүй байна.');
+    }
+
+    await _auth.sendPhoneVerificationCode(
+      phoneNumber: normalizedPhone,
+      onCodeSent: onCodeSent,
+      onFailed: onFailed,
+    );
+  }
+
+
+  Future<void> completePhonePasswordReset({
+    required String phoneNumber,
+    required String verificationId,
+    required String smsCode,
+    required String newPassword,
+  }) async {
+    final normalizedPhone = normalizePhoneNumber(phoneNumber);
+
+    final expectedUid =
+        await _users.getUidForPhoneNumber(normalizedPhone);
+
+    if (expectedUid == null) {
+      throw StateError('Энэ утасны дугаар бүртгэлгүй байна.');
+    }
+
+    final credential = await _auth.signInWithSmsCode(
+      verificationId: verificationId,
+      smsCode: smsCode.trim(),
+    );
+
+    final actualUid = credential.user?.uid;
+
+    if (actualUid == null || actualUid != expectedUid) {
+      await _auth.signOut();
+      throw StateError('Утасны дугаарын баталгаажуулалт таарсангүй.');
+    }
+
+    if (newPassword.length < 6) {
+      throw const FormatException(
+        'Нууц үг хамгийн багадаа 6 тэмдэгт байна.',
+      );
+    }
+
+    await _auth.updatePassword(newPassword);
   }
 
   // ---------------------------------------------------------------------

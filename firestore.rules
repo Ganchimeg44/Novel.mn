@@ -92,13 +92,10 @@ service cloud.firestore {
 
                     && request.resource.data.vipDays == 0
                     && request.resource.data.vvipDays == 0
-                    && request.resource.data.adult18Days == 0
                     && request.resource.data.xp == 0
 
                     && request.resource.data.vipExpiresAt == null
-                    && request.resource.data.vvipExpiresAt == null
-
-                    && request.resource.data.birthdayGiftClaimedYear == null;
+                    && request.resource.data.vvipExpiresAt == null;
 
       allow update: if isSignedIn()
                     && (
@@ -112,23 +109,47 @@ service cloud.firestore {
                           'phoneNumber',
                           'displayName',
                           'profileImageUrl',
-                          'favoriteGenres',
-                          'dislikedGenres',
                           'likedNovelIds',
                           'recentViewedNovelIds',
                           'commentsEnabled',
-                          'bookmarkColor'
+                          'notificationsEnabled',
+                          'fcmTokens'
                         ])
+                        && (
+                          !request.resource.data.diff(
+                            resource.data
+                          ).affectedKeys().hasAny([
+                            'phoneNumber'
+                          ])
+                          ||
+                          (
+                            request.auth.token.phone_number != null
+                            && request.resource.data.phoneNumber
+                                == request.auth.token.phone_number
+                          )
+                        )
                       )
                       ||
-                      isAdmin()
+                      (
+                        isAdmin()
+                        && request.resource.data.diff(
+                          resource.data
+                        ).affectedKeys().hasOnly([
+                          'vipExpiresAt',
+                          'vipDays',
+                          'vvipExpiresAt',
+                          'vvipDays',
+                          'xp',
+                          'isTranslator',
+                          'birthDate'
+                        ])
+                      )
                     );
 
       allow delete: if false;
 
       // =======================================================
       // READING PROGRESS
-      // users/{uid}/readingProgress/{novelId}
       // =======================================================
 
       match /readingProgress/{novelId} {
@@ -214,6 +235,32 @@ service cloud.firestore {
     }
 
     // =========================================================
+    // PHONE NUMBERS
+    // =========================================================
+
+    match /phoneNumbers/{phoneKey} {
+
+      // Нэвтрэхээс өмнө phone -> email lookup хийхэд ашиглана.
+      allow get: if true;
+      allow list: if false;
+
+      // Зөвхөн тухайн нэвтэрсэн хэрэглэгч өөрийн UID-аар reserve хийнэ.
+      allow create: if isSignedIn()
+                    && request.resource.data.keys().hasOnly([
+                      'uid',
+                      'email',
+                      'createdAt'
+                    ])
+                    && request.resource.data.uid == request.auth.uid;
+
+      allow update: if false;
+
+      // Хэрэглэгч зөвхөн өөрийн хуучин phone lookup-ийг устгаж болно.
+      allow delete: if isSignedIn()
+                    && resource.data.uid == request.auth.uid;
+    }
+
+    // =========================================================
     // SIX DIGIT IDS
     // =========================================================
 
@@ -260,6 +307,11 @@ service cloud.firestore {
                     && request.resource.data.sixDigitId
                         is string
 
+                    && request.resource.data.sixDigitId
+                        == get(
+                          /databases/$(database)/documents/users/$(request.auth.uid)
+                        ).data.sixDigitId
+
                     && request.resource.data.days
                         is int
 
@@ -269,8 +321,112 @@ service cloud.firestore {
                     && request.resource.data.months
                         is int
 
-                    && request.resource.data.days > 0
-                    && request.resource.data.amount > 0
+                    && request.resource.data.requestId
+                        == requestId
+
+                    && request.resource.data.planLabel
+                        is string
+
+                    && request.resource.data.createdAt
+                        == request.time
+
+                    && request.resource.data.keys().hasAll([
+                      'requestId',
+                      'userUid',
+                      'sixDigitId',
+                      'entitlementType',
+                      'planLabel',
+                      'months',
+                      'days',
+                      'amount',
+                      'status',
+                      'approvedAt',
+                      'approvedBy',
+                      'createdAt'
+                    ])
+
+                    && request.resource.data.keys().hasOnly([
+                      'requestId',
+                      'userUid',
+                      'sixDigitId',
+                      'entitlementType',
+                      'planLabel',
+                      'months',
+                      'days',
+                      'amount',
+                      'status',
+                      'approvedAt',
+                      'approvedBy',
+                      'createdAt'
+                    ])
+
+                    && (
+                      (
+                        request.resource.data.entitlementType == 'vip'
+                        && (
+                          (
+                            request.resource.data.planLabel == '1 сар'
+                            && request.resource.data.months == 1
+                            && request.resource.data.days == 30
+                            && request.resource.data.amount == 5000
+                          )
+                          ||
+                          (
+                            request.resource.data.planLabel == '2 сар'
+                            && request.resource.data.months == 2
+                            && request.resource.data.days == 60
+                            && request.resource.data.amount == 13000
+                          )
+                          ||
+                          (
+                            request.resource.data.planLabel == '3 сар'
+                            && request.resource.data.months == 3
+                            && request.resource.data.days == 90
+                            && request.resource.data.amount == 27000
+                          )
+                          ||
+                          (
+                            request.resource.data.planLabel == '1 жил'
+                            && request.resource.data.months == 12
+                            && request.resource.data.days == 365
+                            && request.resource.data.amount == 50000
+                          )
+                        )
+                      )
+                      ||
+                      (
+                        request.resource.data.entitlementType == 'vvip'
+                        && (
+                          (
+                            request.resource.data.planLabel == '1 сар'
+                            && request.resource.data.months == 1
+                            && request.resource.data.days == 30
+                            && request.resource.data.amount == 7000
+                          )
+                          ||
+                          (
+                            request.resource.data.planLabel == '2 сар'
+                            && request.resource.data.months == 2
+                            && request.resource.data.days == 60
+                            && request.resource.data.amount == 19000
+                          )
+                          ||
+                          (
+                            request.resource.data.planLabel == '3 сар'
+                            && request.resource.data.months == 3
+                            && request.resource.data.days == 90
+                            && request.resource.data.amount == 37000
+                          )
+                          ||
+                          (
+                            request.resource.data.planLabel == '1 жил'
+                            && request.resource.data.months == 12
+                            && request.resource.data.days == 365
+                            && request.resource.data.amount == 70000
+                          )
+                        )
+                      )
+                    )
 
                     && request.resource.data.approvedAt == null
                     && request.resource.data.approvedBy == null;
@@ -279,11 +435,8 @@ service cloud.firestore {
 
                     && resource.data.status == 'pending'
 
-                    && (
-                      request.resource.data.status == 'approved'
-                      ||
-                      request.resource.data.status == 'rejected'
-                    )
+                    && request.resource.data.requestId
+                        == resource.data.requestId
 
                     && request.resource.data.userUid
                         == resource.data.userUid
@@ -307,15 +460,70 @@ service cloud.firestore {
                         == resource.data.months
 
                     && request.resource.data.createdAt
-                        == resource.data.createdAt;
+                        == resource.data.createdAt
+
+                    && (
+                      (
+                        request.resource.data.status == 'approved'
+
+                        && request.resource.data.keys().hasOnly([
+                          'requestId',
+                          'userUid',
+                          'sixDigitId',
+                          'entitlementType',
+                          'planLabel',
+                          'months',
+                          'days',
+                          'amount',
+                          'status',
+                          'approvedAt',
+                          'approvedBy',
+                          'createdAt'
+                        ])
+
+                        && request.resource.data.approvedAt
+                            == request.time
+
+                        && request.resource.data.approvedBy
+                            == request.auth.uid
+                      )
+                      ||
+                      (
+                        request.resource.data.status == 'rejected'
+
+                        && request.resource.data.keys().hasOnly([
+                          'requestId',
+                          'userUid',
+                          'sixDigitId',
+                          'entitlementType',
+                          'planLabel',
+                          'months',
+                          'days',
+                          'amount',
+                          'status',
+                          'approvedAt',
+                          'approvedBy',
+                          'createdAt',
+                          'rejectedAt',
+                          'rejectedBy'
+                        ])
+
+                        && request.resource.data.approvedAt == null
+                        && request.resource.data.approvedBy == null
+
+                        && request.resource.data.rejectedAt
+                            == request.time
+
+                        && request.resource.data.rejectedBy
+                            == request.auth.uid
+                      )
+                    );
 
       allow delete: if false;
     }
 
     // =========================================================
     // XP REDEEM REQUESTS
-    // 10 XP = 1 VIP хоног
-    // зөвхөн өөртөө
     // =========================================================
 
     match /xpRedeemRequests/{requestId} {
@@ -412,69 +620,6 @@ service cloud.firestore {
     }
 
     // =========================================================
-    // BIRTHDAY GIFT REQUESTS
-    // VIP +7 хоног
-    // =========================================================
-
-    match /birthdayGiftRequests/{requestId} {
-
-      allow read: if isSignedIn()
-                  && (
-                    resource.data.userUid == request.auth.uid
-                    || isAdmin()
-                  );
-
-      allow create: if isSignedIn()
-
-                    && request.resource.data.userUid
-                        == request.auth.uid
-
-                    && request.resource.data.status
-                        == 'pending'
-
-                    && request.resource.data.entitlementType
-                        == 'vip'
-
-                    && request.resource.data.days == 7
-                    && request.resource.data.year is int
-
-                    && request.resource.data.approvedAt == null
-                    && request.resource.data.approvedBy == null
-                    && request.resource.data.rejectedAt == null
-                    && request.resource.data.rejectedBy == null;
-
-      allow update: if isAdmin()
-
-                    && resource.data.status == 'pending'
-
-                    && (
-                      request.resource.data.status == 'approved'
-                      ||
-                      request.resource.data.status == 'rejected'
-                    )
-
-                    && request.resource.data.userUid
-                        == resource.data.userUid
-
-                    && request.resource.data.sixDigitId
-                        == resource.data.sixDigitId
-
-                    && request.resource.data.entitlementType
-                        == resource.data.entitlementType
-
-                    && request.resource.data.days
-                        == resource.data.days
-
-                    && request.resource.data.year
-                        == resource.data.year
-
-                    && request.resource.data.createdAt
-                        == resource.data.createdAt;
-
-      allow delete: if false;
-    }
-
-    // =========================================================
     // COLLECTION GROUP READS
     // =========================================================
 
@@ -543,8 +688,6 @@ service cloud.firestore {
                       )
                     );
 
-        // Translator-д write эрхийг ОДОО өгөхгүй.
-        // Дараагийн алхамд draft/review workflow тусад нь хийнэ.
         allow create: if isAdmin();
         allow update: if isAdmin();
         allow delete: if isAdmin();
@@ -561,6 +704,375 @@ service cloud.firestore {
         allow create: if isAdmin();
         allow update: if isAdmin();
         allow delete: if isAdmin();
+      }
+
+      // =======================================================
+      // TRANSLATION DRAFTS
+      // =======================================================
+
+      match /translationDrafts/{draftId} {
+
+        allow read: if isAdmin()
+                    || isAssignedTranslator(novelId);
+
+        // -----------------------------------------------------
+        // TRANSLATOR CREATE DRAFT
+        // -----------------------------------------------------
+
+        allow create: if isAssignedTranslator(novelId)
+
+                      && request.resource.data.keys().hasAll([
+                        'novelId',
+                        'chapterId',
+                        'chapterNumber',
+                        'translatorUid',
+                        'title',
+                        'content',
+                        'status',
+                        'createdAt',
+                        'updatedAt'
+                      ])
+
+                      && request.resource.data.keys().hasOnly([
+                        'novelId',
+                        'chapterId',
+                        'chapterNumber',
+                        'translatorUid',
+                        'title',
+                        'content',
+                        'status',
+                        'createdAt',
+                        'updatedAt'
+                      ])
+
+                      && request.resource.data.novelId == novelId
+
+                      && request.resource.data.chapterId is string
+                      && request.resource.data.chapterId.size() > 0
+
+                      && request.resource.data.chapterNumber is int
+                      && request.resource.data.chapterNumber > 0
+
+                      && request.resource.data.translatorUid
+                          == request.auth.uid
+
+                      && request.resource.data.title is string
+
+                      && request.resource.data.content is string
+                      && request.resource.data.content.size() > 0
+
+                      && request.resource.data.status == 'draft'
+
+                      && request.resource.data.createdAt
+                          == request.time
+
+                      && request.resource.data.updatedAt
+                          == request.time;
+
+        // -----------------------------------------------------
+        // UPDATE
+        // -----------------------------------------------------
+
+        allow update: if (
+
+          // ===================================================
+          // TRANSLATOR
+          // draft -> draft
+          // draft -> submitted
+          // ===================================================
+
+          (
+            isAssignedTranslator(novelId)
+
+            && resource.data.translatorUid
+                == request.auth.uid
+
+            && request.resource.data.translatorUid
+                == request.auth.uid
+
+            && request.resource.data.novelId
+                == resource.data.novelId
+
+            && request.resource.data.novelId
+                == novelId
+
+            && request.resource.data.chapterId
+                == resource.data.chapterId
+
+            && request.resource.data.chapterNumber
+                == resource.data.chapterNumber
+
+            && request.resource.data.translatorUid
+                == resource.data.translatorUid
+
+            && request.resource.data.createdAt
+                == resource.data.createdAt
+
+            && resource.data.status == 'draft'
+
+            && request.resource.data.title is string
+
+            && request.resource.data.content is string
+            && request.resource.data.content.size() > 0
+
+            && request.resource.data.updatedAt
+                == request.time
+
+            && (
+
+              // draft -> draft
+              (
+                request.resource.data.status == 'draft'
+
+                && request.resource.data.keys().hasAll([
+                  'novelId',
+                  'chapterId',
+                  'chapterNumber',
+                  'translatorUid',
+                  'title',
+                  'content',
+                  'status',
+                  'createdAt',
+                  'updatedAt'
+                ])
+
+                && request.resource.data.keys().hasOnly([
+                  'novelId',
+                  'chapterId',
+                  'chapterNumber',
+                  'translatorUid',
+                  'title',
+                  'content',
+                  'status',
+                  'createdAt',
+                  'updatedAt'
+                ])
+              )
+
+              ||
+
+              // draft -> submitted
+              (
+                request.resource.data.status == 'submitted'
+
+                && request.resource.data.keys().hasAll([
+                  'novelId',
+                  'chapterId',
+                  'chapterNumber',
+                  'translatorUid',
+                  'title',
+                  'content',
+                  'status',
+                  'createdAt',
+                  'updatedAt',
+                  'submittedAt'
+                ])
+
+                && request.resource.data.keys().hasOnly([
+                  'novelId',
+                  'chapterId',
+                  'chapterNumber',
+                  'translatorUid',
+                  'title',
+                  'content',
+                  'status',
+                  'createdAt',
+                  'updatedAt',
+                  'submittedAt'
+                ])
+
+                && request.resource.data.submittedAt
+                    == request.time
+              )
+            )
+          )
+
+          ||
+
+          // ===================================================
+          // ADMIN REVIEW
+          // submitted -> approved
+          // submitted -> rejected
+          // ===================================================
+
+          (
+            isAdmin()
+
+            && resource.data.status == 'submitted'
+
+            && (
+              request.resource.data.status == 'approved'
+              ||
+              request.resource.data.status == 'rejected'
+            )
+
+            && request.resource.data.novelId
+                == resource.data.novelId
+
+            && request.resource.data.chapterId
+                == resource.data.chapterId
+
+            && request.resource.data.chapterNumber
+                == resource.data.chapterNumber
+
+            && request.resource.data.translatorUid
+                == resource.data.translatorUid
+
+            && request.resource.data.title
+                == resource.data.title
+
+            && request.resource.data.content
+                == resource.data.content
+
+            && request.resource.data.createdAt
+                == resource.data.createdAt
+
+            && request.resource.data.submittedAt
+                == resource.data.submittedAt
+
+            && request.resource.data.updatedAt
+                == request.time
+
+            && request.resource.data.reviewedAt
+                == request.time
+
+            && request.resource.data.reviewedBy
+                == request.auth.uid
+
+            && request.resource.data.reviewNote
+                is string
+
+            && request.resource.data.keys().hasAll([
+              'novelId',
+              'chapterId',
+              'chapterNumber',
+              'translatorUid',
+              'title',
+              'content',
+              'status',
+              'createdAt',
+              'updatedAt',
+              'submittedAt',
+              'reviewedAt',
+              'reviewedBy',
+              'reviewNote'
+            ])
+
+            && request.resource.data.keys().hasOnly([
+              'novelId',
+              'chapterId',
+              'chapterNumber',
+              'translatorUid',
+              'title',
+              'content',
+              'status',
+              'createdAt',
+              'updatedAt',
+              'submittedAt',
+              'reviewedAt',
+              'reviewedBy',
+              'reviewNote'
+            ])
+          )
+
+          ||
+
+          // ===================================================
+          // ADMIN PUBLISH
+          // approved -> published
+          // ===================================================
+
+          (
+            isAdmin()
+
+            && resource.data.status == 'approved'
+
+            && request.resource.data.status == 'published'
+
+            && request.resource.data.novelId
+                == resource.data.novelId
+
+            && request.resource.data.novelId
+                == novelId
+
+            && request.resource.data.chapterId
+                == resource.data.chapterId
+
+            && request.resource.data.chapterNumber
+                == resource.data.chapterNumber
+
+            && request.resource.data.translatorUid
+                == resource.data.translatorUid
+
+            && request.resource.data.title
+                == resource.data.title
+
+            && request.resource.data.content
+                == resource.data.content
+
+            && request.resource.data.createdAt
+                == resource.data.createdAt
+
+            && request.resource.data.submittedAt
+                == resource.data.submittedAt
+
+            && request.resource.data.reviewedAt
+                == resource.data.reviewedAt
+
+            && request.resource.data.reviewedBy
+                == resource.data.reviewedBy
+
+            && request.resource.data.reviewNote
+                == resource.data.reviewNote
+
+            && request.resource.data.updatedAt
+                == request.time
+
+            && request.resource.data.publishedAt
+                == request.time
+
+            && request.resource.data.publishedBy
+                == request.auth.uid
+
+            && request.resource.data.keys().hasAll([
+              'novelId',
+              'chapterId',
+              'chapterNumber',
+              'translatorUid',
+              'title',
+              'content',
+              'status',
+              'createdAt',
+              'updatedAt',
+              'submittedAt',
+              'reviewedAt',
+              'reviewedBy',
+              'reviewNote',
+              'publishedAt',
+              'publishedBy'
+            ])
+
+            && request.resource.data.keys().hasOnly([
+              'novelId',
+              'chapterId',
+              'chapterNumber',
+              'translatorUid',
+              'title',
+              'content',
+              'status',
+              'createdAt',
+              'updatedAt',
+              'submittedAt',
+              'reviewedAt',
+              'reviewedBy',
+              'reviewNote',
+              'publishedAt',
+              'publishedBy'
+            ])
+          )
+        );
+
+        allow delete: if false;
       }
 
       // =======================================================
@@ -731,11 +1243,194 @@ service cloud.firestore {
                             == request.auth.uid
                         || isAdmin()
                       );
+
+        // =====================================================
+        // COMMENT REPLIES
+        // =====================================================
+
+        match /replies/{replyId} {
+
+          allow read: if isSignedIn();
+
+          allow create: if isSignedIn()
+                        && request.resource.data.keys().hasAll([
+                          'userUid',
+                          'username',
+                          'text',
+                          'createdAt',
+                          'updatedAt'
+                        ])
+                        && request.resource.data.keys().hasOnly([
+                          'userUid',
+                          'username',
+                          'text',
+                          'createdAt',
+                          'updatedAt',
+                          'replyToUid',
+                          'replyToUsername'
+                        ])
+                        && request.resource.data.userUid
+                            == request.auth.uid
+                        && request.resource.data.username is string
+                        && request.resource.data.username.size() >= 1
+                        && request.resource.data.username.size() <= 50
+                        && request.resource.data.text is string
+                        && request.resource.data.text.size() >= 1
+                        && request.resource.data.text.size() <= 2000
+                        && request.resource.data.createdAt
+                            == request.time
+                        && request.resource.data.updatedAt
+                            == request.time
+                        && (
+                          !request.resource.data.keys().hasAny([
+                            'replyToUid',
+                            'replyToUsername'
+                          ])
+                          || (
+                            request.resource.data.replyToUid is string
+                            && request.resource.data.replyToUid.size() >= 1
+                            && request.resource.data.replyToUsername is string
+                            && request.resource.data.replyToUsername.size() >= 1
+                            && request.resource.data.replyToUsername.size() <= 50
+                          )
+                        );
+
+          allow update: if isSignedIn()
+                        && resource.data.userUid
+                            == request.auth.uid
+                        && request.resource.data.keys().hasAll([
+                          'userUid',
+                          'username',
+                          'text',
+                          'createdAt',
+                          'updatedAt'
+                        ])
+                        && request.resource.data.keys().hasOnly([
+                          'userUid',
+                          'username',
+                          'text',
+                          'createdAt',
+                          'updatedAt',
+                          'replyToUid',
+                          'replyToUsername'
+                        ])
+                        && request.resource.data.userUid
+                            == resource.data.userUid
+                        && request.resource.data.username
+                            == resource.data.username
+                        && request.resource.data.createdAt
+                            == resource.data.createdAt
+                        && request.resource.data.text is string
+                        && request.resource.data.text.size() >= 1
+                        && request.resource.data.text.size() <= 2000
+                        && request.resource.data.updatedAt
+                            == request.time
+                        && request.resource.data
+                            .diff(resource.data)
+                            .affectedKeys()
+                            .hasOnly([
+                              'text',
+                              'updatedAt'
+                            ]);
+
+          allow delete: if isSignedIn()
+                        && (
+                          resource.data.userUid
+                              == request.auth.uid
+                          || isAdmin()
+                          || get(
+                            /databases/$(database)/documents/novels/$(novelId)/comments/$(commentId)
+                          ).data.userUid == request.auth.uid
+                        );
+        }
+
+        // =====================================================
+        // COMMENT REACTIONS
+        // One user = one reaction per comment
+        // =====================================================
+
+        match /reactions/{reactionUserId} {
+
+          allow read: if isSignedIn();
+
+          allow create: if isSignedIn()
+                        && reactionUserId == request.auth.uid
+                        && request.resource.data.keys().hasAll([
+                          'userUid',
+                          'type',
+                          'createdAt',
+                          'updatedAt'
+                        ])
+                        && request.resource.data.keys().hasOnly([
+                          'userUid',
+                          'type',
+                          'createdAt',
+                          'updatedAt'
+                        ])
+                        && request.resource.data.userUid
+                            == request.auth.uid
+                        && request.resource.data.type in [
+                          'like',
+                          'love',
+                          'haha',
+                          'dislike'
+                        ]
+                        && request.resource.data.createdAt
+                            == request.time
+                        && request.resource.data.updatedAt
+                            == request.time;
+
+          allow update: if isSignedIn()
+                        && reactionUserId == request.auth.uid
+                        && resource.data.userUid
+                            == request.auth.uid
+                        && request.resource.data.keys().hasAll([
+                          'userUid',
+                          'type',
+                          'createdAt',
+                          'updatedAt'
+                        ])
+                        && request.resource.data.keys().hasOnly([
+                          'userUid',
+                          'type',
+                          'createdAt',
+                          'updatedAt'
+                        ])
+                        && request.resource.data.userUid
+                            == resource.data.userUid
+                        && request.resource.data.createdAt
+                            == resource.data.createdAt
+                        && request.resource.data.type in [
+                          'like',
+                          'love',
+                          'haha',
+                          'dislike'
+                        ]
+                        && request.resource.data.updatedAt
+                            == request.time;
+
+          allow delete: if isSignedIn()
+                        && (
+                          reactionUserId == request.auth.uid
+                          || isAdmin()
+                          || get(
+                            /databases/$(database)/documents/novels/$(novelId)/comments/$(commentId)
+                          ).data.userUid == request.auth.uid
+                        );
+        }
       }
     }
 
     // =========================================================
-    // БУСАД БҮХ COLLECTION
+    // ADMIN COLLECTION GROUP READ
+    // =========================================================
+
+    match /{path=**}/translationDrafts/{draftId} {
+      allow read: if isAdmin();
+    }
+
+    // =========================================================
+    // DENY EVERYTHING ELSE
     // =========================================================
 
     match /{document=**} {

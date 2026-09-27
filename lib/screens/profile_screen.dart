@@ -1,4 +1,3 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -12,6 +11,10 @@ import 'admin_screen.dart';
 import 'translator_screen.dart';
 import 'subscription_screen.dart';
 import 'xp_redeem_screen.dart';
+import 'reading_settings_screen.dart';
+import 'auth/change_password_screen.dart';
+import 'auth/change_phone_screen.dart';
+import 'notification_settings_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -23,9 +26,7 @@ class ProfileScreen extends StatefulWidget {
 class _ProfileScreenState extends State<ProfileScreen> {
   final AuthService _authService = AuthService();
   final UserRepository _userRepository = UserRepository();
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
-  bool _sendingBirthdayGiftRequest = false;
 
   late Future<UserModel?> _userFuture;
 
@@ -131,164 +132,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
     Navigator.of(context).popUntil(
       (route) => route.isFirst,
-    );
-  }
-
-  Future<void> _requestBirthdayGift(UserModel user) async {
-    if (_sendingBirthdayGiftRequest) {
-      return;
-    }
-
-    final firebaseUser = _authService.currentUser;
-
-    if (firebaseUser == null) {
-      return;
-    }
-
-    final birthDate = user.birthDate;
-
-    if (birthDate == null) {
-      return;
-    }
-
-    final now = DateTime.now();
-
-    final isBirthdayToday =
-        now.month == birthDate.month &&
-        now.day == birthDate.day;
-
-    if (!isBirthdayToday) {
-      _showBirthdayMessage(
-        'Төрсөн өдрийн бэлгийг зөвхөн төрсөн өдрөөрөө авах боломжтой.',
-      );
-      return;
-    }
-
-    if (user.birthdayGiftClaimedYear == now.year) {
-      _showBirthdayMessage(
-        'Та энэ жилийн төрсөн өдрийн бэлгээ аль хэдийн авсан байна.',
-      );
-      return;
-    }
-
-    setState(() {
-      _sendingBirthdayGiftRequest = true;
-    });
-
-    try {
-      final userSnapshot = await _firestore
-          .collection('users')
-          .doc(firebaseUser.uid)
-          .get();
-
-      if (!userSnapshot.exists) {
-        throw Exception(
-          'Хэрэглэгчийн мэдээлэл олдсонгүй.',
-        );
-      }
-
-      final latestData =
-          userSnapshot.data() ?? <String, dynamic>{};
-
-      final latestClaimedYear =
-          latestData['birthdayGiftClaimedYear'];
-
-      if (latestClaimedYear == now.year) {
-        throw Exception(
-          'Энэ жилийн төрсөн өдрийн бэлгийг аль хэдийн авсан байна.',
-        );
-      }
-
-      final existingRequests = await _firestore
-          .collection('birthdayGiftRequests')
-          .where(
-            'userUid',
-            isEqualTo: firebaseUser.uid,
-          )
-          .where(
-            'status',
-            isEqualTo: 'pending',
-          )
-          .get();
-
-      final alreadyPendingThisYear =
-          existingRequests.docs.any(
-        (document) {
-          final data = document.data();
-
-          return _readBirthdayYear(
-                data['year'],
-              ) ==
-              now.year;
-        },
-      );
-
-      if (alreadyPendingThisYear) {
-        throw Exception(
-          'Таны төрсөн өдрийн бэлгийн хүсэлт аль хэдийн хүлээгдэж байна.',
-        );
-      }
-
-      await _firestore
-          .collection('birthdayGiftRequests')
-          .add(
-        {
-          'userUid': firebaseUser.uid,
-          'sixDigitId': user.sixDigitId,
-          'entitlementType': 'vip',
-          'days': 7,
-          'year': now.year,
-          'status': 'pending',
-          'createdAt': FieldValue.serverTimestamp(),
-          'approvedAt': null,
-          'approvedBy': null,
-          'rejectedAt': null,
-          'rejectedBy': null,
-        },
-      );
-
-      if (!mounted) return;
-
-      _showBirthdayMessage(
-        '🎂 VIP +7 хоногийн хүсэлт амжилттай илгээгдлээ.',
-      );
-    } catch (error) {
-      if (!mounted) return;
-
-      _showBirthdayMessage(
-        'Хүсэлт илгээх үед алдаа гарлаа: $error',
-      );
-    } finally {
-      if (mounted) {
-        setState(() {
-          _sendingBirthdayGiftRequest = false;
-        });
-      }
-    }
-  }
-
-  int _readBirthdayYear(dynamic value) {
-    if (value is int) {
-      return value;
-    }
-
-    if (value is num) {
-      return value.toInt();
-    }
-
-    return int.tryParse(
-          value?.toString() ?? '',
-        ) ??
-        0;
-  }
-
-  void _showBirthdayMessage(String message) {
-    if (!mounted) return;
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-      ),
     );
   }
 
@@ -426,12 +269,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                         ),
                       ),
                     ),
-
-                    const SizedBox(
-                      height: AppSpacing.lg,
-                    ),
-
-                    _buildBirthdayCard(user),
 
                     if (user.isTranslator) ...[
                       const SizedBox(
@@ -694,152 +531,65 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  Widget _buildBirthdayCard(UserModel user) {
-    final birthDate = user.birthDate;
-
-    if (birthDate == null) {
-      return const SizedBox.shrink();
-    }
-
-    final now = DateTime.now();
-
-    final isBirthdayToday =
-        now.month == birthDate.month &&
-        now.day == birthDate.day;
-
-    final alreadyClaimedThisYear =
-        user.birthdayGiftClaimedYear == now.year;
-
-    final canClaim =
-        isBirthdayToday &&
-        !alreadyClaimedThisYear;
-
-    return PremiumCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Icon(
-                Icons.card_giftcard_rounded,
-                color: AppColors.gold,
-                size: 28,
-              ),
-              const SizedBox(
-                width: AppSpacing.md,
-              ),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment:
-                      CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Төрсөн өдрийн бэлэг',
-                      style: AppTypography.cardTitle(),
-                    ),
-                    const SizedBox(
-                      height: 2,
-                    ),
-                    Text(
-                      'VIP +7 хоног',
-                      style: AppTypography.meta(
-                        color: AppColors.gold,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-
-          const SizedBox(
-            height: AppSpacing.md,
-          ),
-
-          Text(
-            alreadyClaimedThisYear
-                ? '🎉 Энэ жилийн бэлгээ авсан байна.'
-                : isBirthdayToday
-                    ? '🎂 Төрсөн өдрийн мэнд! VIP +7 хоногийн бэлгээ аваарай.'
-                    : 'Зөвхөн төрсөн өдрөөрөө идэвхжинэ.',
-            style: AppTypography.body(),
-          ),
-
-          if (canClaim) ...[
-            const SizedBox(
-              height: AppSpacing.lg,
-            ),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed:
-                    _sendingBirthdayGiftRequest
-                        ? null
-                        : () =>
-                            _requestBirthdayGift(
-                              user,
-                            ),
-                icon: _sendingBirthdayGiftRequest
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child:
-                            CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
-                    : const Icon(
-                        Icons.card_giftcard_rounded,
-                      ),
-                label: Text(
-                  _sendingBirthdayGiftRequest
-                      ? 'Илгээж байна...'
-                      : 'VIP +7 хоног авах',
-                ),
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
   Widget _buildSettingsRows(UserModel user) {
     return PremiumCard(
       padding: EdgeInsets.zero,
       child: Column(
         children: [
-          const _SettingsRow(
+          _SettingsRow(
             icon: Icons.menu_book_outlined,
             label: 'Унших тохиргоо',
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) =>
+                      const ReadingSettingsScreen(),
+                ),
+              );
+            },
           ),
 
           const _SettingsDivider(),
 
           _SettingsRow(
-            icon: Icons.favorite_border_rounded,
-            label: 'Дуртай жанр',
-            trailingText:
-                user.favoriteGenres.isEmpty
-                    ? null
-                    : user.favoriteGenres.join(', '),
-          ),
-
-          const _SettingsDivider(),
-
-          const _SettingsRow(
             icon: Icons.notifications_none_rounded,
             label: 'Мэдэгдэл',
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) =>
+                      const NotificationSettingsScreen(),
+                ),
+              );
+            },
           ),
 
           const _SettingsDivider(),
 
           _SettingsRow(
-            icon: Icons.palette_outlined,
-            label: 'Bookmark өнгө',
-            trailingSwatch:
-                _parseHexColor(user.bookmarkColor),
+            icon: Icons.lock_outline_rounded,
+            label: 'Нууц үг солих',
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const ChangePasswordScreen(),
+                ),
+              );
+            },
+          ),
+
+          const _SettingsDivider(),
+
+          _SettingsRow(
+            icon: Icons.phone_outlined,
+            label: 'Утасны дугаар солих',
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const ChangePhoneScreen(),
+                ),
+              );
+            },
           ),
 
           const _SettingsDivider(),
@@ -855,27 +605,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
         ],
       ),
     );
-  }
-
-  Color? _parseHexColor(String hex) {
-    try {
-      final cleaned =
-          hex.replaceAll('#', '');
-
-      final fullHex =
-          cleaned.length == 6
-              ? 'FF$cleaned'
-              : cleaned;
-
-      return Color(
-        int.parse(
-          fullHex,
-          radix: 16,
-        ),
-      );
-    } catch (_) {
-      return null;
-    }
   }
 
   Widget _buildLogoutButton() {
@@ -962,76 +691,62 @@ class _SettingsRow extends StatelessWidget {
   final IconData icon;
   final String label;
   final String? trailingText;
-  final Color? trailingSwatch;
+  final VoidCallback? onTap;
 
   const _SettingsRow({
     required this.icon,
     required this.label,
     this.trailingText,
-    this.trailingSwatch,
+    this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.lg,
-        vertical: AppSpacing.md,
-      ),
-      child: Row(
-        children: [
-          Icon(
-            icon,
-            color: AppColors.textSecondary,
-            size: 20,
-          ),
-
-          const SizedBox(
-            width: AppSpacing.md,
-          ),
-
-          Expanded(
-            child: Text(
-              label,
-              style: AppTypography.body(
-                color: AppColors.textPrimary,
-              ),
-            ),
-          ),
-
-          if (trailingText != null)
-            Text(
-              trailingText!,
-              style: AppTypography.meta(),
+    return InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.lg,
+          vertical: AppSpacing.md,
+        ),
+        child: Row(
+          children: [
+            Icon(
+              icon,
+              color: AppColors.textSecondary,
+              size: 20,
             ),
 
-          if (trailingSwatch != null) ...[
             const SizedBox(
-              width: AppSpacing.sm,
+              width: AppSpacing.md,
             ),
-            Container(
-              width: 16,
-              height: 16,
-              decoration: BoxDecoration(
-                color: trailingSwatch,
-                shape: BoxShape.circle,
-                border: Border.all(
-                  color: AppColors.border,
+
+            Expanded(
+              child: Text(
+                label,
+                style: AppTypography.body(
+                  color: AppColors.textPrimary,
                 ),
               ),
             ),
+
+            if (trailingText != null)
+              Text(
+                trailingText!,
+                style: AppTypography.meta(),
+              ),
+
+            const SizedBox(
+              width: AppSpacing.sm,
+            ),
+
+            const Icon(
+              Icons.chevron_right_rounded,
+              color: AppColors.textMuted,
+              size: 18,
+            ),
           ],
-
-          const SizedBox(
-            width: AppSpacing.sm,
-          ),
-
-          const Icon(
-            Icons.chevron_right_rounded,
-            color: AppColors.textMuted,
-            size: 18,
-          ),
-        ],
+        ),
       ),
     );
   }

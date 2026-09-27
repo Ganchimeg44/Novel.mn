@@ -5,6 +5,7 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '../models/novel.dart';
 import '../models/user_model.dart';
+import '../services/reading_settings_service.dart';
 import '../theme/app_theme.dart';
 
 class ChapterReaderScreen extends StatefulWidget {
@@ -32,7 +33,12 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen> {
 
   String _chapterContent = '';
 
+  final ReadingSettingsService _readingSettingsService =
+      ReadingSettingsService();
+
+  String _fontFamily = 'Noto Sans';
   double _fontSize = 18;
+  double _lineHeight = 1.9;
 
   bool _accessLoading = true;
   bool _chapterLoading = false;
@@ -111,13 +117,30 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen> {
   }
 
   Future<void> _loadInitialData() async {
-    await _loadAccess();
+    await Future.wait([
+      _loadAccess(),
+      _loadReadingSettings(),
+    ]);
 
     if (!mounted) {
       return;
     }
 
     await _loadCurrentChapter();
+  }
+
+  Future<void> _loadReadingSettings() async {
+    final settings = await _readingSettingsService.load();
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _fontFamily = settings.fontFamily;
+      _fontSize = settings.fontSize;
+      _lineHeight = settings.lineHeight;
+    });
   }
 
   int _readInt(dynamic value) {
@@ -388,77 +411,218 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen> {
       context: context,
       backgroundColor: AppColors.readerBackground,
       showDragHandle: true,
+      isScrollControlled: true,
       builder: (context) {
         return StatefulBuilder(
           builder: (context, setSheetState) {
-            return SafeArea(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(
-                  24,
-                  8,
-                  24,
-                  28,
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      'Үсгийн хэмжээ',
-                      style: GoogleFonts.poppins(
-                        color: AppColors.readerText,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    Row(
-                      children: [
-                        Text(
-                          'A',
-                          style: GoogleFonts.lora(
-                            color: AppColors.readerText,
-                            fontSize: 14,
-                          ),
-                        ),
-                        Expanded(
-                          child: Slider(
-                            value: _fontSize,
-                            min: 14,
-                            max: 28,
-                            divisions: 7,
-                            activeColor: AppColors.primary,
-                            inactiveColor:
-                                AppColors.readerMuted.withValues(
-                              alpha: 0.25,
-                            ),
-                            onChanged: (value) {
-                              setState(() {
-                                _fontSize = value;
-                              });
+            Future<void> updateSettings({
+              String? fontFamily,
+              double? fontSize,
+              double? lineHeight,
+            }) async {
+              final nextFontFamily = fontFamily ?? _fontFamily;
+              final nextFontSize = fontSize ?? _fontSize;
+              final nextLineHeight = lineHeight ?? _lineHeight;
 
-                              setSheetState(() {});
-                            },
-                          ),
+              setState(() {
+                _fontFamily = nextFontFamily;
+                _fontSize = nextFontSize;
+                _lineHeight = nextLineHeight;
+              });
+
+              setSheetState(() {});
+
+              await _readingSettingsService.save(
+                ReadingSettings(
+                  fontFamily: nextFontFamily,
+                  fontSize: nextFontSize,
+                  lineHeight: nextLineHeight,
+                ),
+              );
+            }
+
+            return SafeArea(
+              child: SingleChildScrollView(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(
+                    24,
+                    8,
+                    24,
+                    28,
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        'Унших тохиргоо',
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.poppins(
+                          color: AppColors.readerText,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w600,
                         ),
-                        Text(
-                          'A',
-                          style: GoogleFonts.lora(
-                            color: AppColors.readerText,
-                            fontSize: 26,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '${_fontSize.round()} px',
-                      style: GoogleFonts.poppins(
-                        color: AppColors.readerMuted,
-                        fontSize: 12,
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 24),
+
+                      Text(
+                        'Фонт',
+                        style: GoogleFonts.poppins(
+                          color: AppColors.readerText,
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 8,
+                        children: ReadingSettingsService.availableFonts
+                            .map(
+                              (font) => ChoiceChip(
+                                label: Text(
+                                  font,
+                                  style: _readerTextStyle(
+                                    fontFamily: font,
+                                    fontSize: 14,
+                                    lineHeight: 1.2,
+                                  ),
+                                ),
+                                selected: _fontFamily == font,
+                                onSelected: (_) {
+                                  updateSettings(
+                                    fontFamily: font,
+                                  );
+                                },
+                              ),
+                            )
+                            .toList(),
+                      ),
+
+                      const SizedBox(height: 28),
+
+                      Row(
+                        mainAxisAlignment:
+                            MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            'Үсгийн хэмжээ',
+                            style: GoogleFonts.poppins(
+                              color: AppColors.readerText,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          Text(
+                            '${_fontSize.round()} px',
+                            style: GoogleFonts.poppins(
+                              color: AppColors.readerMuted,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+
+                      Row(
+                        children: [
+                          Text(
+                            'A',
+                            style: _readerTextStyle(
+                              fontSize: 14,
+                              lineHeight: 1.2,
+                            ),
+                          ),
+                          Expanded(
+                            child: Slider(
+                              value: _fontSize,
+                              min: 14,
+                              max: 28,
+                              divisions: 14,
+                              activeColor: AppColors.primary,
+                              inactiveColor:
+                                  AppColors.readerMuted.withValues(
+                                alpha: 0.25,
+                              ),
+                              onChanged: (value) {
+                                updateSettings(
+                                  fontSize: value,
+                                );
+                              },
+                            ),
+                          ),
+                          Text(
+                            'A',
+                            style: _readerTextStyle(
+                              fontSize: 28,
+                              lineHeight: 1.2,
+                            ),
+                          ),
+                        ],
+                      ),
+
+                      const SizedBox(height: 20),
+
+                      Row(
+                        mainAxisAlignment:
+                            MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            'Мөр хоорондын зай',
+                            style: GoogleFonts.poppins(
+                              color: AppColors.readerText,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          Text(
+                            _lineHeight.toStringAsFixed(1),
+                            style: GoogleFonts.poppins(
+                              color: AppColors.readerMuted,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+
+                      Slider(
+                        value: _lineHeight,
+                        min: 1.2,
+                        max: 2.4,
+                        divisions: 12,
+                        activeColor: AppColors.primary,
+                        inactiveColor:
+                            AppColors.readerMuted.withValues(
+                          alpha: 0.25,
+                        ),
+                        onChanged: (value) {
+                          updateSettings(
+                            lineHeight: value,
+                          );
+                        },
+                      ),
+
+                      const SizedBox(height: 20),
+
+                      Container(
+                        padding: const EdgeInsets.all(18),
+                        decoration: BoxDecoration(
+                          color: AppColors.readerMuted.withValues(
+                            alpha: 0.08,
+                          ),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Text(
+                          'Энэ бол унших тохиргооны жишээ текст. '
+                          'Фонт, үсгийн хэмжээ болон мөр хоорондын '
+                          'зайг өөрчлөөд хараарай.',
+                          style: _readerTextStyle(),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             );
@@ -466,6 +630,44 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen> {
         );
       },
     );
+  }
+
+  TextStyle _readerTextStyle({
+    String? fontFamily,
+    double? fontSize,
+    double? lineHeight,
+  }) {
+    final family = fontFamily ?? _fontFamily;
+
+    final baseStyle = TextStyle(
+      color: AppColors.readerText,
+      fontSize: fontSize ?? _fontSize,
+      height: lineHeight ?? _lineHeight,
+      fontWeight: FontWeight.w400,
+    );
+
+    switch (family) {
+      case 'Noto Serif':
+        return GoogleFonts.notoSerif(
+          textStyle: baseStyle,
+        );
+
+      case 'Roboto':
+        return GoogleFonts.roboto(
+          textStyle: baseStyle,
+        );
+
+      case 'PT Serif':
+        return GoogleFonts.ptSerif(
+          textStyle: baseStyle,
+        );
+
+      case 'Noto Sans':
+      default:
+        return GoogleFonts.notoSans(
+          textStyle: baseStyle,
+        );
+    }
   }
 
   @override
@@ -630,12 +832,7 @@ class _ChapterReaderScreenState extends State<ChapterReaderScreen> {
 
     return Text(
       _chapterContent,
-      style: GoogleFonts.lora(
-        color: AppColors.readerText,
-        fontSize: _fontSize,
-        height: 1.9,
-        fontWeight: FontWeight.w400,
-      ),
+      style: _readerTextStyle(),
     );
   }
 

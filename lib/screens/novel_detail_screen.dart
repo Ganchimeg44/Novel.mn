@@ -564,7 +564,24 @@ class _NovelDetailScreenState extends State<NovelDetailScreen> {
     if (confirmed != true) return;
 
     try {
-      await comment.reference.delete();
+      final repliesSnapshot =
+          await comment.reference.collection('replies').get();
+      final reactionsSnapshot =
+          await comment.reference.collection('reactions').get();
+
+      final batch = _firestore.batch();
+
+      for (final reply in repliesSnapshot.docs) {
+        batch.delete(reply.reference);
+      }
+
+      for (final reaction in reactionsSnapshot.docs) {
+        batch.delete(reaction.reference);
+      }
+
+      batch.delete(comment.reference);
+
+      await batch.commit();
     } on FirebaseException catch (error) {
       if (!mounted) return;
 
@@ -572,6 +589,288 @@ class _NovelDetailScreenState extends State<NovelDetailScreen> {
         SnackBar(
           content: Text(
             'Сэтгэгдэл устгах үед алдаа гарлаа: '
+            '${error.message ?? error.code}',
+          ),
+        ),
+      );
+    }
+  }
+
+  CollectionReference<Map<String, dynamic>> _repliesRef(
+    DocumentReference<Map<String, dynamic>> commentRef,
+  ) {
+    return commentRef.collection('replies');
+  }
+
+  CollectionReference<Map<String, dynamic>> _reactionsRef(
+    DocumentReference<Map<String, dynamic>> commentRef,
+  ) {
+    return commentRef.collection('reactions');
+  }
+
+  Future<void> _sendReply(
+    QueryDocumentSnapshot<Map<String, dynamic>> comment, {
+    QueryDocumentSnapshot<Map<String, dynamic>>? replyTo,
+  }) async {
+    final firebaseUser = _auth.currentUser;
+
+    if (firebaseUser == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Хариу бичихийн тулд нэвтэрсэн байх шаардлагатай.'),
+        ),
+      );
+      return;
+    }
+
+    final replyToData = replyTo?.data();
+    final targetUsername =
+        (replyToData?['username'] ?? '').toString().trim();
+
+    final controller = TextEditingController();
+
+    final replyText = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: Text(
+            replyTo == null
+                ? 'Хариу бичих'
+                : '@${targetUsername.isEmpty ? 'Хэрэглэгч' : targetUsername}-д хариу бичих',
+          ),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            minLines: 2,
+            maxLines: 6,
+            maxLength: 2000,
+            decoration: InputDecoration(
+              hintText: replyTo == null
+                  ? 'Хариугаа бичнэ үү...'
+                  : '@${targetUsername.isEmpty ? 'Хэрэглэгч' : targetUsername}',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Болих'),
+            ),
+            ElevatedButton(
+              onPressed: () =>
+                  Navigator.of(dialogContext).pop(controller.text.trim()),
+              child: const Text('Илгээх'),
+            ),
+          ],
+        );
+      },
+    );
+
+    controller.dispose();
+
+    if (replyText == null || replyText.isEmpty) return;
+
+    try {
+      final username = await _currentUsername();
+
+      final data = <String, dynamic>{
+        'userUid': firebaseUser.uid,
+        'username': username,
+        'text': replyText,
+        'createdAt': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
+
+      if (replyTo != null) {
+        data['replyToUid'] =
+            (replyToData?['userUid'] ?? '').toString();
+        data['replyToUsername'] =
+            targetUsername.isEmpty ? 'Хэрэглэгч' : targetUsername;
+      }
+
+      await _repliesRef(comment.reference).add(data);
+    } on FirebaseException catch (error) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Хариу хадгалах үед алдаа гарлаа: '
+            '${error.message ?? error.code}',
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _editReply(
+    QueryDocumentSnapshot<Map<String, dynamic>> reply,
+  ) async {
+    final firebaseUser = _auth.currentUser;
+    final data = reply.data();
+
+    if (firebaseUser == null || data['userUid'] != firebaseUser.uid) {
+      return;
+    }
+
+    final controller = TextEditingController(
+      text: (data['text'] ?? '').toString(),
+    );
+
+    final editedText = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Хариу засах'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            minLines: 2,
+            maxLines: 6,
+            maxLength: 2000,
+            decoration: const InputDecoration(
+              hintText: 'Хариугаа бичнэ үү...',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('Болих'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(dialogContext).pop(controller.text.trim());
+              },
+              child: const Text('Хадгалах'),
+            ),
+          ],
+        );
+      },
+    );
+
+    controller.dispose();
+
+    if (editedText == null || editedText.isEmpty) return;
+
+    try {
+      await reply.reference.update({
+        'text': editedText,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+    } on FirebaseException catch (error) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Хариу засах үед алдаа гарлаа: '
+            '${error.message ?? error.code}',
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _deleteReply(
+    QueryDocumentSnapshot<Map<String, dynamic>> reply,
+  ) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Хариу устгах'),
+          content: const Text('Энэ хариуг устгах уу?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Болих'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Устгах'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      await reply.reference.delete();
+    } on FirebaseException catch (error) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Хариу устгах үед алдаа гарлаа: '
+            '${error.message ?? error.code}',
+          ),
+        ),
+      );
+    }
+  }
+
+  Future<void> _toggleCommentReaction(
+    QueryDocumentSnapshot<Map<String, dynamic>> comment,
+    String type,
+  ) async {
+    final firebaseUser = _auth.currentUser;
+
+    if (firebaseUser == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Reaction хийхийн тулд нэвтэрсэн байх шаардлагатай.'),
+        ),
+      );
+      return;
+    }
+
+    const allowedTypes = <String>{
+      'like',
+      'love',
+      'haha',
+      'dislike',
+    };
+
+    if (!allowedTypes.contains(type)) return;
+
+    final reactionRef =
+        _reactionsRef(comment.reference).doc(firebaseUser.uid);
+
+    try {
+      await _firestore.runTransaction((transaction) async {
+        final snapshot = await transaction.get(reactionRef);
+
+        if (!snapshot.exists) {
+          transaction.set(reactionRef, {
+            'userUid': firebaseUser.uid,
+            'type': type,
+            'createdAt': FieldValue.serverTimestamp(),
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+          return;
+        }
+
+        final currentType =
+            (snapshot.data()?['type'] ?? '').toString();
+
+        if (currentType == type) {
+          transaction.delete(reactionRef);
+        } else {
+          transaction.update(reactionRef, {
+            'type': type,
+            'updatedAt': FieldValue.serverTimestamp(),
+          });
+        }
+      });
+    } on FirebaseException catch (error) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Reaction хадгалах үед алдаа гарлаа: '
             '${error.message ?? error.code}',
           ),
         ),
@@ -1571,9 +1870,459 @@ class _NovelDetailScreenState extends State<NovelDetailScreen> {
     );
   }
 
-  Widget _buildCommentsPlaceholder() {
+  Widget _buildCommentCard(
+    QueryDocumentSnapshot<Map<String, dynamic>> comment,
+  ) {
+    final firebaseUser = _auth.currentUser;
+    final data = comment.data();
+    final username =
+        (data['username'] ?? 'Хэрэглэгч').toString().trim();
+    final text = (data['text'] ?? '').toString();
+    final isOwner =
+        firebaseUser != null && data['userUid'] == firebaseUser.uid;
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+      child: PremiumCard(
+        padding: const EdgeInsets.all(AppSpacing.lg),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const CircleAvatar(
+                  radius: 18,
+                  backgroundColor: AppColors.surfaceElevated,
+                  child: Icon(
+                    Icons.person_rounded,
+                    color: AppColors.textSecondary,
+                    size: 20,
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.md),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        username.isEmpty ? 'Хэрэглэгч' : username,
+                        style: GoogleFonts.poppins(
+                          color: AppColors.textPrimary,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      Text(
+                        _formatCommentTime(data['createdAt']),
+                        style: AppTypography.meta(),
+                      ),
+                    ],
+                  ),
+                ),
+                if (isOwner)
+                  PopupMenuButton<String>(
+                    onSelected: (value) {
+                      if (value == 'edit') {
+                        _editComment(comment);
+                      } else if (value == 'delete') {
+                        _deleteComment(comment);
+                      }
+                    },
+                    itemBuilder: (context) => const [
+                      PopupMenuItem(
+                        value: 'edit',
+                        child: Text('Засах'),
+                      ),
+                      PopupMenuItem(
+                        value: 'delete',
+                        child: Text('Устгах'),
+                      ),
+                    ],
+                  ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.md),
+            Text(
+              text,
+              style: GoogleFonts.poppins(
+                color: AppColors.textSecondary,
+                fontSize: 14,
+                height: 1.55,
+              ),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            _buildReactionBar(comment),
+            const SizedBox(height: AppSpacing.sm),
+            TextButton.icon(
+              onPressed: () => _sendReply(comment),
+              icon: const Icon(
+                Icons.reply_rounded,
+                size: 18,
+              ),
+              label: const Text('Хариу бичих'),
+            ),
+            _buildReplies(comment),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildReactionBar(
+    QueryDocumentSnapshot<Map<String, dynamic>> comment,
+  ) {
     final firebaseUser = _auth.currentUser;
 
+    const reactionInfo = <String, List<String>>{
+      'like': ['👍', 'Like'],
+      'love': ['❤️', 'Love'],
+      'haha': ['😂', 'Haha'],
+      'dislike': ['👎', 'Dislike'],
+    };
+
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: _reactionsRef(comment.reference).snapshots(),
+      builder: (context, snapshot) {
+        final counts = <String, int>{
+          'like': 0,
+          'love': 0,
+          'haha': 0,
+          'dislike': 0,
+        };
+
+        String? myReaction;
+
+        for (final reaction in snapshot.data?.docs ??
+            <QueryDocumentSnapshot<Map<String, dynamic>>>[]) {
+          final type =
+              (reaction.data()['type'] ?? '').toString();
+
+          if (counts.containsKey(type)) {
+            counts[type] = counts[type]! + 1;
+          }
+
+          if (firebaseUser != null &&
+              reaction.id == firebaseUser.uid) {
+            myReaction = type;
+          }
+        }
+
+        final total = counts.values.fold<int>(
+          0,
+          (totalCount, value) => totalCount + value,
+        );
+
+        final selectedInfo =
+            reactionInfo[myReaction] ?? reactionInfo['like']!;
+
+        final activeReactions = reactionInfo.entries
+            .where((entry) => (counts[entry.key] ?? 0) > 0)
+            .toList();
+
+        Future<void> showReactionPicker() async {
+          final overlay =
+              Overlay.of(context).context.findRenderObject()
+                  as RenderBox;
+
+          final button =
+              context.findRenderObject() as RenderBox?;
+
+          if (button == null) return;
+
+          final position =
+              button.localToGlobal(Offset.zero, ancestor: overlay);
+
+          final selected = await showMenu<String>(
+            context: context,
+            color: AppColors.surfaceElevated,
+            elevation: 10,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(28),
+            ),
+            position: RelativeRect.fromLTRB(
+              position.dx,
+              position.dy - 70,
+              overlay.size.width - position.dx - 230,
+              overlay.size.height - position.dy,
+            ),
+            items: [
+              PopupMenuItem<String>(
+                enabled: false,
+                padding: EdgeInsets.zero,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: reactionInfo.entries.map((entry) {
+                    return InkWell(
+                      borderRadius: BorderRadius.circular(30),
+                      onTap: () {
+                        Navigator.of(context).pop(entry.key);
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 8,
+                        ),
+                        child: Text(
+                          entry.value[0],
+                          style: const TextStyle(fontSize: 28),
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+              ),
+            ],
+          );
+
+          if (selected != null) {
+            await _toggleCommentReaction(comment, selected);
+          }
+        }
+
+        return Row(
+          children: [
+            if (total > 0) ...[
+              ...activeReactions.take(3).map(
+                (entry) => Padding(
+                  padding: const EdgeInsets.only(right: 2),
+                  child: Text(
+                    entry.value[0],
+                    style: const TextStyle(fontSize: 14),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 4),
+              Text(
+                '$total',
+                style: AppTypography.meta(),
+              ),
+              const SizedBox(width: 12),
+            ],
+            GestureDetector(
+              onLongPress: showReactionPicker,
+              onSecondaryTap: showReactionPicker,
+              child: InkWell(
+                borderRadius: BorderRadius.circular(18),
+                onTap: () {
+                  if (myReaction == null) {
+                    _toggleCommentReaction(comment, 'like');
+                  } else {
+                    _toggleCommentReaction(comment, myReaction);
+                  }
+                },
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 6,
+                    vertical: 5,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        selectedInfo[0],
+                        style: const TextStyle(fontSize: 16),
+                      ),
+                      const SizedBox(width: 5),
+                      Text(
+                        myReaction == null
+                            ? 'Like'
+                            : selectedInfo[1],
+                        style: GoogleFonts.poppins(
+                          color: myReaction == null
+                              ? AppColors.textSecondary
+                              : AppColors.primaryLight,
+                          fontSize: 12,
+                          fontWeight: myReaction == null
+                              ? FontWeight.w500
+                              : FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildReplies(
+    QueryDocumentSnapshot<Map<String, dynamic>> comment,
+  ) {
+    return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+      stream: _repliesRef(comment.reference)
+          .orderBy('createdAt')
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.hasError) {
+          return Padding(
+            padding: const EdgeInsets.only(top: AppSpacing.sm),
+            child: Text(
+              'Хариунуудыг унших үед алдаа гарлаа.',
+              style: AppTypography.meta(),
+            ),
+          );
+        }
+
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const SizedBox.shrink();
+        }
+
+        final replies = snapshot.data?.docs ??
+            <QueryDocumentSnapshot<Map<String, dynamic>>>[];
+
+        if (replies.isEmpty) {
+          return const SizedBox.shrink();
+        }
+
+        return Padding(
+          padding: const EdgeInsets.only(
+            top: AppSpacing.sm,
+            left: AppSpacing.lg,
+          ),
+          child: Column(
+            children: replies.map((reply) {
+              final replyData = reply.data();
+              final firebaseUser = _auth.currentUser;
+              final replyOwner = firebaseUser != null &&
+                  replyData['userUid'] == firebaseUser.uid;
+              final replyUsername =
+                  (replyData['username'] ?? 'Хэрэглэгч')
+                      .toString()
+                      .trim();
+              final replyText =
+                  (replyData['text'] ?? '').toString();
+              final replyToUsername =
+                  (replyData['replyToUsername'] ?? '')
+                      .toString()
+                      .trim();
+
+              return Container(
+                width: double.infinity,
+                margin: const EdgeInsets.only(
+                  bottom: AppSpacing.sm,
+                ),
+                padding: const EdgeInsets.all(AppSpacing.md),
+                decoration: BoxDecoration(
+                  color: AppColors.surfaceElevated,
+                  borderRadius:
+                      BorderRadius.circular(AppRadius.premium),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.subdirectory_arrow_right_rounded,
+                          color: AppColors.primaryLight,
+                          size: 17,
+                        ),
+                        const SizedBox(width: AppSpacing.sm),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment:
+                                CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                replyUsername.isEmpty
+                                    ? 'Хэрэглэгч'
+                                    : replyUsername,
+                                style: GoogleFonts.poppins(
+                                  color: AppColors.textPrimary,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              Text(
+                                _formatCommentTime(
+                                  replyData['createdAt'],
+                                ),
+                                style: AppTypography.meta(),
+                              ),
+                            ],
+                          ),
+                        ),
+                        if (replyOwner)
+                          PopupMenuButton<String>(
+                            onSelected: (value) {
+                              if (value == 'edit') {
+                                _editReply(reply);
+                              } else if (value == 'delete') {
+                                _deleteReply(reply);
+                              }
+                            },
+                            itemBuilder: (context) => const [
+                              PopupMenuItem(
+                                value: 'edit',
+                                child: Text('Засах'),
+                              ),
+                              PopupMenuItem(
+                                value: 'delete',
+                                child: Text('Устгах'),
+                              ),
+                            ],
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    if (replyToUsername.isNotEmpty) ...[
+                      Text(
+                        '@$replyToUsername',
+                        style: GoogleFonts.poppins(
+                          color: AppColors.primaryLight,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                    ],
+                    Text(
+                      replyText,
+                      style: GoogleFonts.poppins(
+                        color: AppColors.textSecondary,
+                        fontSize: 13,
+                        height: 1.45,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    TextButton.icon(
+                      onPressed: () => _sendReply(
+                        comment,
+                        replyTo: reply,
+                      ),
+                      style: TextButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 4,
+                          vertical: 2,
+                        ),
+                        minimumSize: Size.zero,
+                        tapTargetSize:
+                            MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      icon: const Icon(
+                        Icons.reply_rounded,
+                        size: 15,
+                      ),
+                      label: const Text(
+                        'Хариу бичих',
+                        style: TextStyle(fontSize: 11),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }).toList(),
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildCommentsPlaceholder() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -1662,89 +2411,7 @@ class _NovelDetailScreenState extends State<NovelDetailScreen> {
             style: AppTypography.meta(),
           ),
           const SizedBox(height: AppSpacing.md),
-          ..._comments.map((comment) {
-            final data = comment.data();
-            final username =
-                (data['username'] ?? 'Хэрэглэгч').toString().trim();
-            final text = (data['text'] ?? '').toString();
-            final isOwner = firebaseUser != null &&
-                data['userUid'] == firebaseUser.uid;
-
-            return Padding(
-              padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-              child: PremiumCard(
-                padding: const EdgeInsets.all(AppSpacing.lg),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const CircleAvatar(
-                          radius: 18,
-                          backgroundColor: AppColors.surfaceElevated,
-                          child: Icon(
-                            Icons.person_rounded,
-                            color: AppColors.textSecondary,
-                            size: 20,
-                          ),
-                        ),
-                        const SizedBox(width: AppSpacing.md),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                username.isEmpty ? 'Хэрэглэгч' : username,
-                                style: GoogleFonts.poppins(
-                                  color: AppColors.textPrimary,
-                                  fontSize: 13,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                              Text(
-                                _formatCommentTime(data['createdAt']),
-                                style: AppTypography.meta(),
-                              ),
-                            ],
-                          ),
-                        ),
-                        if (isOwner)
-                          PopupMenuButton<String>(
-                            onSelected: (value) {
-                              if (value == 'edit') {
-                                _editComment(comment);
-                              } else if (value == 'delete') {
-                                _deleteComment(comment);
-                              }
-                            },
-                            itemBuilder: (context) => const [
-                              PopupMenuItem(
-                                value: 'edit',
-                                child: Text('Засах'),
-                              ),
-                              PopupMenuItem(
-                                value: 'delete',
-                                child: Text('Устгах'),
-                              ),
-                            ],
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: AppSpacing.md),
-                    Text(
-                      text,
-                      style: GoogleFonts.poppins(
-                        color: AppColors.textSecondary,
-                        fontSize: 14,
-                        height: 1.55,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          }),
+          ..._comments.map(_buildCommentCard),
         ],
       ],
     );

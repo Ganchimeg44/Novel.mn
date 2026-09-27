@@ -31,7 +31,13 @@ class UserRepository {
   CollectionReference<Map<String, dynamic>> get _sixDigitIds =>
       _db.collection('sixDigitIds');
 
+  CollectionReference<Map<String, dynamic>> get _phoneNumbers =>
+      _db.collection('phoneNumbers');
+
   String _usernameKey(String username) => username.trim().toLowerCase();
+
+  String _phoneKey(String phoneNumber) =>
+      phoneNumber.replaceAll(RegExp(r'[^0-9]'), '');
 
   // ---------------------------------------------------------------------
   // Username: давхардахгүй байдал
@@ -75,6 +81,73 @@ class UserRepository {
     final doc = await _usernames.doc(_usernameKey(username)).get();
     if (!doc.exists) return null;
     return doc.data()?['email'] as String?;
+  }
+
+  // ---------------------------------------------------------------------
+  // Утасны дугаар: давхардахгүй байдал + login lookup
+  // ---------------------------------------------------------------------
+
+  Future<void> reservePhoneNumber({
+    required String phoneNumber,
+    required String uid,
+    required String email,
+  }) async {
+    final docRef = _phoneNumbers.doc(_phoneKey(phoneNumber));
+
+    await _db.runTransaction((transaction) async {
+      final snapshot = await transaction.get(docRef);
+
+      if (snapshot.exists) {
+        final existingUid = snapshot.data()?['uid'] as String?;
+        if (existingUid != uid) {
+          throw StateError('Энэ утасны дугаар аль хэдийн бүртгэлтэй байна.');
+        }
+        return;
+      }
+
+      transaction.set(docRef, {
+        'uid': uid,
+        'email': email,
+        'createdAt': DateTime.now(),
+      });
+    });
+  }
+
+  Future<String?> getEmailForPhoneNumber(String phoneNumber) async {
+    final doc = await _phoneNumbers.doc(_phoneKey(phoneNumber)).get();
+    if (!doc.exists) return null;
+    return doc.data()?['email'] as String?;
+  }
+
+
+  Future<String?> getUidForPhoneNumber(String phoneNumber) async {
+    final doc = await _phoneNumbers.doc(_phoneKey(phoneNumber)).get();
+    if (!doc.exists) return null;
+    return doc.data()?['uid'] as String?;
+  }
+
+
+  Future<void> removePhoneNumber({
+    required String phoneNumber,
+    required String uid,
+  }) async {
+    final docRef = _phoneNumbers.doc(_phoneKey(phoneNumber));
+
+    await _db.runTransaction((transaction) async {
+      final snapshot = await transaction.get(docRef);
+
+      if (!snapshot.exists) return;
+
+      final existingUid = snapshot.data()?['uid'] as String?;
+
+      if (existingUid != uid) {
+        throw StateError(
+          'Утасны дугаарын бүртгэл хэрэглэгчтэй таарахгүй байна.',
+        );
+      }
+
+      transaction.delete(docRef);
+    });
   }
 
   // ---------------------------------------------------------------------

@@ -42,15 +42,29 @@ class _TranslatorDraftEditorScreenState
 
   bool _draftExists = false;
   String _draftStatus = 'draft';
+  String _reviewNote = '';
 
-  String? get _uid =>
-      FirebaseAuth.instance.currentUser?.uid;
+  String? get _uid => FirebaseAuth.instance.currentUser?.uid;
 
   String get _draftId =>
       '${widget.chapterId}_${_uid ?? ''}';
 
+  bool get _isRejected =>
+      _draftStatus == 'rejected';
+
   bool get _isSubmitted =>
       _draftStatus == 'submitted';
+
+  bool get _isApproved =>
+      _draftStatus == 'approved';
+
+  bool get _isPublished =>
+      _draftStatus == 'published';
+
+  bool get _isLocked =>
+      _isSubmitted || _isApproved || _isPublished;
+
+  bool get _canEdit => !_isLocked;
 
   DocumentReference<Map<String, dynamic>> get _chapterRef =>
       _firestore
@@ -160,6 +174,9 @@ class _TranslatorDraftEditorScreenState
         _draftStatus =
             (draftData['status'] ?? 'draft').toString();
 
+        _reviewNote =
+            (draftData['reviewNote'] ?? '').toString();
+
         _draftExists = true;
       } else {
         _titleController.text =
@@ -169,6 +186,7 @@ class _TranslatorDraftEditorScreenState
             (chapterData['content'] ?? '').toString();
 
         _draftStatus = 'draft';
+        _reviewNote = '';
         _draftExists = false;
       }
 
@@ -203,7 +221,7 @@ class _TranslatorDraftEditorScreenState
     if (uid == null ||
         _saving ||
         _submitting ||
-        _isSubmitted) {
+        !_canEdit) {
       return false;
     }
 
@@ -234,7 +252,11 @@ class _TranslatorDraftEditorScreenState
         'translatorUid': uid,
         'title': title,
         'content': content,
-        'status': 'draft',
+
+        // Rejected үед rejected хэвээр хадгална.
+        // Ингэснээр админы буцаасан төлөв алга болохгүй.
+        'status': _isRejected ? 'rejected' : 'draft',
+
         'updatedAt': FieldValue.serverTimestamp(),
       };
 
@@ -252,14 +274,19 @@ class _TranslatorDraftEditorScreenState
 
       setState(() {
         _draftExists = true;
-        _draftStatus = 'draft';
+
+        if (!_isRejected) {
+          _draftStatus = 'draft';
+        }
       });
 
       if (showMessage) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
+          SnackBar(
             content: Text(
-              'Ноорог хадгалагдлаа.',
+              _isRejected
+                  ? 'Засвар хадгалагдлаа.'
+                  : 'Ноорог хадгалагдлаа.',
             ),
           ),
         );
@@ -301,7 +328,9 @@ class _TranslatorDraftEditorScreenState
   }
 
   Future<void> _submitDraft() async {
-    if (_submitting || _saving || _isSubmitted) {
+    if (_submitting ||
+        _saving ||
+        !_canEdit) {
       return;
     }
 
@@ -316,7 +345,6 @@ class _TranslatorDraftEditorScreenState
       return;
     }
 
-    // Эхлээд хамгийн сүүлийн өөрчлөлтийг хадгална.
     final saved = await _saveDraft(
       showMessage: false,
     );
@@ -329,12 +357,14 @@ class _TranslatorDraftEditorScreenState
       context: context,
       builder: (dialogContext) {
         return AlertDialog(
-          title: const Text(
-            'Хяналтад илгээх үү?',
+          title: Text(
+            _isRejected
+                ? 'Дахин хяналтад илгээх үү?'
+                : 'Хяналтад илгээх үү?',
           ),
           content: const Text(
-            'Илгээсний дараа энэ ноорог түгжигдэж, '
-            'орчуулагч засах боломжгүй болно.',
+            'Илгээсний дараа энэ орчуулга түгжигдэж, '
+            'хяналт дуусах хүртэл засах боломжгүй болно.',
           ),
           actions: [
             TextButton(
@@ -451,6 +481,89 @@ class _TranslatorDraftEditorScreenState
     );
   }
 
+  Widget _buildStatusCard() {
+    IconData icon;
+    String text;
+
+    if (_isSubmitted) {
+      icon = Icons.lock_rounded;
+      text = 'Хяналтад илгээсэн • Түгжигдсэн';
+    } else if (_isApproved) {
+      icon = Icons.check_circle_outline_rounded;
+      text = 'Зөвшөөрөгдсөн • Түгжигдсэн';
+    } else if (_isPublished) {
+      icon = Icons.public_rounded;
+      text = 'Publish хийгдсэн • Түгжигдсэн';
+    } else if (_isRejected) {
+      icon = Icons.undo_rounded;
+      text = 'Засварт буцаасан';
+    } else if (_draftExists) {
+      icon = Icons.edit_note_rounded;
+      text = 'Хадгалсан ноорог';
+    } else {
+      icon = Icons.edit_note_rounded;
+      text = 'Шинэ ноорог';
+    }
+
+    return PremiumCard(
+      child: Row(
+        children: [
+          Icon(
+            icon,
+            color: AppColors.primaryLight,
+          ),
+          const SizedBox(
+            width: AppSpacing.sm,
+          ),
+          Expanded(
+            child: Text(
+              text,
+              style: AppTypography.meta(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLockedMessage() {
+    String message;
+
+    if (_isSubmitted) {
+      message =
+          'Энэ орчуулга хяналтад байна. '
+          'Одоогоор засах боломжгүй.';
+    } else if (_isApproved) {
+      message =
+          'Энэ орчуулгыг админ зөвшөөрсөн байна. '
+          'Publish хийх хүртэл орчуулагч засах боломжгүй.';
+    } else {
+      message =
+          'Энэ орчуулга Publish хийгдсэн байна. '
+          'Дахин засах боломжгүй.';
+    }
+
+    return PremiumCard(
+      child: Row(
+        children: [
+          const Icon(
+            Icons.lock_rounded,
+            color: AppColors.primaryLight,
+          ),
+          const SizedBox(
+            width: AppSpacing.sm,
+          ),
+          Expanded(
+            child: Text(
+              message,
+              style: AppTypography.body(),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildEditor() {
     return Center(
       child: ConstrainedBox(
@@ -466,42 +579,63 @@ class _TranslatorDraftEditorScreenState
               widget.novelTitle,
               style: AppTypography.pageTitle(),
             ),
+
             const SizedBox(
               height: AppSpacing.xs,
             ),
+
             Text(
               'Бүлэг ${widget.chapterNumber}',
               style: AppTypography.body(),
             ),
+
             const SizedBox(
               height: AppSpacing.md,
             ),
 
-            PremiumCard(
-              child: Row(
-                children: [
-                  Icon(
-                    _isSubmitted
-                        ? Icons.lock_rounded
-                        : Icons.edit_note_rounded,
-                    color: AppColors.primaryLight,
-                  ),
-                  const SizedBox(
-                    width: AppSpacing.sm,
-                  ),
-                  Expanded(
-                    child: Text(
-                      _isSubmitted
-                          ? 'Хяналтад илгээсэн • Түгжигдсэн'
-                          : _draftExists
-                              ? 'Хадгалсан ноорог'
-                              : 'Шинэ ноорог',
-                      style: AppTypography.meta(),
-                    ),
-                  ),
-                ],
+            _buildStatusCard(),
+
+            if (_isRejected) ...[
+              const SizedBox(
+                height: AppSpacing.md,
               ),
-            ),
+
+              PremiumCard(
+                child: Column(
+                  crossAxisAlignment:
+                      CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.feedback_outlined,
+                          color: AppColors.primaryLight,
+                        ),
+                        const SizedBox(
+                          width: AppSpacing.sm,
+                        ),
+                        Expanded(
+                          child: Text(
+                            'Админы буцаасан шалтгаан',
+                            style:
+                                AppTypography.cardTitle(),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(
+                      height: AppSpacing.sm,
+                    ),
+                    Text(
+                      _reviewNote.trim().isEmpty
+                          ? 'Шалтгаан бичээгүй байна.'
+                          : _reviewNote,
+                      style: AppTypography.body(),
+                    ),
+                  ],
+                ),
+              ),
+            ],
 
             const SizedBox(
               height: AppSpacing.lg,
@@ -511,13 +645,14 @@ class _TranslatorDraftEditorScreenState
               'Бүлгийн нэр',
               style: AppTypography.cardTitle(),
             ),
+
             const SizedBox(
               height: AppSpacing.sm,
             ),
 
             TextField(
               controller: _titleController,
-              enabled: !_isSubmitted,
+              enabled: _canEdit,
               style: AppTypography.body(),
               decoration: const InputDecoration(
                 hintText: 'Бүлгийн нэр',
@@ -533,13 +668,14 @@ class _TranslatorDraftEditorScreenState
               'Орчуулга',
               style: AppTypography.cardTitle(),
             ),
+
             const SizedBox(
               height: AppSpacing.sm,
             ),
 
             TextField(
               controller: _contentController,
-              enabled: !_isSubmitted,
+              enabled: _canEdit,
               minLines: 18,
               maxLines: null,
               keyboardType: TextInputType.multiline,
@@ -556,7 +692,7 @@ class _TranslatorDraftEditorScreenState
               height: AppSpacing.xl,
             ),
 
-            if (!_isSubmitted) ...[
+            if (_canEdit) ...[
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton.icon(
@@ -570,7 +706,8 @@ class _TranslatorDraftEditorScreenState
                       ? const SizedBox(
                           width: 18,
                           height: 18,
-                          child: CircularProgressIndicator(
+                          child:
+                              CircularProgressIndicator(
                             strokeWidth: 2,
                           ),
                         )
@@ -580,7 +717,9 @@ class _TranslatorDraftEditorScreenState
                   label: Text(
                     _saving
                         ? 'Хадгалж байна...'
-                        : 'Ноорог хадгалах',
+                        : _isRejected
+                            ? 'Засвар хадгалах'
+                            : 'Ноорог хадгалах',
                   ),
                 ),
               ),
@@ -600,7 +739,8 @@ class _TranslatorDraftEditorScreenState
                       ? const SizedBox(
                           width: 18,
                           height: 18,
-                          child: CircularProgressIndicator(
+                          child:
+                              CircularProgressIndicator(
                             strokeWidth: 2,
                           ),
                         )
@@ -610,38 +750,23 @@ class _TranslatorDraftEditorScreenState
                   label: Text(
                     _submitting
                         ? 'Илгээж байна...'
-                        : 'Хяналтад илгээх',
+                        : _isRejected
+                            ? 'Дахин хяналтад илгээх'
+                            : 'Хяналтад илгээх',
                   ),
                 ),
               ),
             ] else
-              PremiumCard(
-                child: Row(
-                  children: [
-                    const Icon(
-                      Icons.hourglass_top_rounded,
-                      color: AppColors.primaryLight,
-                    ),
-                    const SizedBox(
-                      width: AppSpacing.sm,
-                    ),
-                    Expanded(
-                      child: Text(
-                        'Энэ орчуулга хяналтад байна. '
-                        'Одоогоор засах боломжгүй.',
-                        style: AppTypography.body(),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+              _buildLockedMessage(),
 
             const SizedBox(
               height: AppSpacing.md,
             ),
 
             Text(
-              'Live бүлэг шууд өөрчлөгдөхгүй.',
+              _isPublished
+                  ? 'Энэ хувилбар live бүлэгт Publish хийгдсэн.'
+                  : 'Live бүлэг шууд өөрчлөгдөхгүй.',
               textAlign: TextAlign.center,
               style: AppTypography.meta(),
             ),

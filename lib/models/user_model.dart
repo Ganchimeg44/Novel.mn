@@ -32,11 +32,6 @@ class UserModel {
   final int vipDays;
   final int vvipDays;
 
-  /// +18 тусдаа entitlement биш болсон.
-  /// Хуучин хэрэглэгчдийн Firestore data эвдрэхгүй байлгахын тулд
-  /// түр хадгалж байна. Цаашид migration хийсний дараа устгаж болно.
-  final int adult18Days;
-
   // ---------------------------------------------------------------------
   // ШИНЭ expiration систем
   // ---------------------------------------------------------------------
@@ -53,19 +48,12 @@ class UserModel {
 
   final int xp;
 
-  final List<String> favoriteGenres;
-  final List<String> dislikedGenres;
   final List<String> likedNovelIds;
-
-  /// Төрсөн өдрийн бэлэг авсан сүүлийн жил.
-  final int? birthdayGiftClaimedYear;
 
   final bool isAdmin;
   final bool isTranslator;
   final bool commentsEnabled;
-
-  /// Bookmark өнгө. Жишээ: "#6C5CE7"
-  final String bookmarkColor;
+  final bool notificationsEnabled;
 
   const UserModel({
     required this.uid,
@@ -82,21 +70,17 @@ class UserModel {
     // Legacy
     this.vipDays = 0,
     this.vvipDays = 0,
-    this.adult18Days = 0,
 
     // Шинэ expiration
     this.vipExpiresAt,
     this.vvipExpiresAt,
 
     this.xp = 0,
-    this.favoriteGenres = const [],
-    this.dislikedGenres = const [],
     this.likedNovelIds = const [],
-    this.birthdayGiftClaimedYear,
     this.isAdmin = false,
     this.isTranslator = false,
     this.commentsEnabled = true,
-    this.bookmarkColor = '#6C5CE7',
+    this.notificationsEnabled = false,
   });
 
   // ---------------------------------------------------------------------
@@ -158,8 +142,7 @@ class UserModel {
   /// +18 контентын эрх.
   ///
   /// +18 нь тусдаа subscription биш.
-  /// Насны шалгалтыг тусдаа age logic хийнэ.
-  /// Энд зөвхөн VVIP entitlement-ийг шалгана.
+  /// +18 контентын эрхийг VVIP membership-ээр олгоно.
   bool get hasAdultAccess => isVvip;
 
   /// VIP-ийн үлдсэн хоног.
@@ -307,10 +290,6 @@ class UserModel {
           (map['vvipDays'] as num?)
                   ?.toInt() ??
               0,
-      adult18Days:
-          (map['adult18Days'] as num?)
-                  ?.toInt() ??
-              0,
 
       // Шинэ expiration
       vipExpiresAt:
@@ -327,28 +306,11 @@ class UserModel {
                   ?.toInt() ??
               0,
 
-      favoriteGenres:
-          List<String>.from(
-        map['favoriteGenres'] as List? ??
-            [],
-      ),
-
-      dislikedGenres:
-          List<String>.from(
-        map['dislikedGenres'] as List? ??
-            [],
-      ),
-
       likedNovelIds:
           List<String>.from(
         map['likedNovelIds'] as List? ??
             [],
       ),
-
-      birthdayGiftClaimedYear:
-          (map['birthdayGiftClaimedYear']
-                  as num?)
-              ?.toInt(),
 
       isAdmin:
           (map['isAdmin'] as bool?) ??
@@ -362,9 +324,10 @@ class UserModel {
           (map['commentsEnabled'] as bool?) ??
               true,
 
-      bookmarkColor:
-          (map['bookmarkColor'] as String?) ??
-              '#6C5CE7',
+      notificationsEnabled:
+          (map['notificationsEnabled'] as bool?) ??
+              false,
+
     );
   }
 
@@ -388,7 +351,6 @@ class UserModel {
       // Legacy
       'vipDays': vipDays,
       'vvipDays': vvipDays,
-      'adult18Days': adult18Days,
 
       // Шинэ expiration
       'vipExpiresAt': vipExpiresAt,
@@ -396,17 +358,12 @@ class UserModel {
 
       'xp': xp,
 
-      'favoriteGenres': favoriteGenres,
-      'dislikedGenres': dislikedGenres,
       'likedNovelIds': likedNovelIds,
-
-      'birthdayGiftClaimedYear':
-          birthdayGiftClaimedYear,
 
       'isAdmin': isAdmin,
       'isTranslator': isTranslator,
       'commentsEnabled': commentsEnabled,
-      'bookmarkColor': bookmarkColor,
+      'notificationsEnabled': notificationsEnabled,
     };
   }
 
@@ -428,24 +385,19 @@ class UserModel {
 
     int? vipDays,
     int? vvipDays,
-    int? adult18Days,
 
     DateTime? vipExpiresAt,
     DateTime? vvipExpiresAt,
 
     int? xp,
 
-    List<String>? favoriteGenres,
-    List<String>? dislikedGenres,
     List<String>? likedNovelIds,
-
-    int? birthdayGiftClaimedYear,
 
     bool? isAdmin,
     bool? isTranslator,
     bool? commentsEnabled,
+    bool? notificationsEnabled,
 
-    String? bookmarkColor,
   }) {
     return UserModel(
       uid: uid ?? this.uid,
@@ -473,9 +425,6 @@ class UserModel {
           vipDays ?? this.vipDays,
       vvipDays:
           vvipDays ?? this.vvipDays,
-      adult18Days:
-          adult18Days ??
-              this.adult18Days,
 
       vipExpiresAt:
           vipExpiresAt ??
@@ -487,19 +436,9 @@ class UserModel {
       xp:
           xp ?? this.xp,
 
-      favoriteGenres:
-          favoriteGenres ??
-              this.favoriteGenres,
-      dislikedGenres:
-          dislikedGenres ??
-              this.dislikedGenres,
       likedNovelIds:
           likedNovelIds ??
               this.likedNovelIds,
-
-      birthdayGiftClaimedYear:
-          birthdayGiftClaimedYear ??
-              this.birthdayGiftClaimedYear,
 
       isAdmin:
           isAdmin ?? this.isAdmin,
@@ -509,10 +448,10 @@ class UserModel {
       commentsEnabled:
           commentsEnabled ??
               this.commentsEnabled,
+      notificationsEnabled:
+          notificationsEnabled ??
+              this.notificationsEnabled,
 
-      bookmarkColor:
-          bookmarkColor ??
-              this.bookmarkColor,
     );
   }
 

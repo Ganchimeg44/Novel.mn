@@ -3,12 +3,11 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '../../services/registration_controller.dart';
 import '../../theme/app_theme.dart';
-import 'otp_verification_screen.dart';
+import 'forgot_password_screen.dart';
 import 'register_screen.dart';
 
-/// Нэвтрэх дэлгэц. Хэрэглэгч Username, Gmail эсвэл утасны дугаараа
-/// оруулж болно — утасны дугаар мэт таних тэмдэг илэрвэл нууц үгийн
-/// оронд OTP флоу руу шилжинэ.
+/// Нэвтрэх дэлгэц.
+/// Username, Gmail эсвэл утасны дугаар + нууц үгээр нэвтэрнэ.
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
 
@@ -31,15 +30,18 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  bool get _looksLikePhoneNumber {
-    final value = _identifierCtrl.text.trim();
-    return RegExp(r'^\+?[0-9]{8,15}$').hasMatch(value);
-  }
 
   Future<void> _submit() async {
     final identifier = _identifierCtrl.text.trim();
+    final password = _passwordCtrl.text;
+
     if (identifier.isEmpty) {
       setState(() => _errorMessage = 'Нэвтрэх мэдээллээ оруулна уу.');
+      return;
+    }
+
+    if (password.isEmpty) {
+      setState(() => _errorMessage = 'Нууц үгээ оруулна уу.');
       return;
     }
 
@@ -49,40 +51,16 @@ class _LoginScreenState extends State<LoginScreen> {
     });
 
     try {
-      if (_looksLikePhoneNumber) {
-        await _registrationController.startPhoneLogin(
-          phoneNumber: identifier,
-          onCodeSent: (verificationId) {
-            if (!mounted) return;
-            Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => OtpVerificationScreen(
-                  verificationId: verificationId,
-                  phoneNumber: identifier,
-                  mode: OtpMode.login,
-                ),
-              ),
-            );
-          },
-          onFailed: (error) {
-            setState(() {
-              _errorMessage = error.message ?? 'Утас баталгаажуулахад алдаа гарлаа.';
-            });
-          },
-        );
-      } else {
-        if (_passwordCtrl.text.isEmpty) {
-          setState(() => _errorMessage = 'Нууц үгээ оруулна уу.');
-          return;
-        }
-        await _registrationController.loginWithPassword(
-          identifier: identifier,
-          password: _passwordCtrl.text,
-        );
-        if (mounted) Navigator.of(context).pop();
-      }
+      await _registrationController.loginWithPassword(
+        identifier: identifier,
+        password: password,
+      );
+
+      if (mounted) Navigator.of(context).pop();
     } catch (error) {
-      setState(() => _errorMessage = error.toString());
+      if (mounted) {
+        setState(() => _errorMessage = error.toString());
+      }
     } finally {
       if (mounted) setState(() => _isSubmitting = false);
     }
@@ -109,16 +87,27 @@ class _LoginScreenState extends State<LoginScreen> {
                 decoration: const InputDecoration(
                   labelText: 'Username / Gmail / Утасны дугаар',
                 ),
-                onChanged: (_) => setState(() {}),
               ),
               const SizedBox(height: 14),
-              if (!_looksLikePhoneNumber)
-                TextField(
-                  controller: _passwordCtrl,
-                  obscureText: true,
-                  style: const TextStyle(color: AppColors.textPrimary),
-                  decoration: const InputDecoration(labelText: 'Нууц үг'),
+              TextField(
+                controller: _passwordCtrl,
+                obscureText: true,
+                style: const TextStyle(color: AppColors.textPrimary),
+                decoration: const InputDecoration(labelText: 'Нууц үг'),
+              ),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton(
+                  onPressed: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const ForgotPasswordScreen(),
+                      ),
+                    );
+                  },
+                  child: const Text('Нууц үгээ мартсан уу?'),
                 ),
+              ),
               if (_errorMessage != null) ...[
                 const SizedBox(height: 14),
                 Text(_errorMessage!, style: const TextStyle(color: Colors.redAccent)),
@@ -134,7 +123,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           height: 20,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : Text(_looksLikePhoneNumber ? 'Код авах' : 'Нэвтрэх'),
+                      : const Text('Нэвтрэх'),
                 ),
               ),
               const SizedBox(height: 16),
